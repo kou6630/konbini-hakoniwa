@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>コンビニはじめちゃいました</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --green:#1fa463; --blue:#2f7ff0; --ink:#22313a; --paper:rgba(255,255,255,.94); }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; overflow:hidden; user-select:none; -webkit-user-select:none; }
+  body { font-family:"Yu Gothic UI","Meiryo","Segoe UI",sans-serif; color:var(--ink);
+         background: radial-gradient(ellipse at 50% 35%, #e6f4fc 0%, #bcd8ea 60%, #a3c1d8 100%); }
+  canvas#view { position:fixed; inset:0; width:100%; height:100%; display:block; }
+  .card { background:var(--paper); border-radius:16px; box-shadow:0 6px 18px rgba(30,60,90,.22); }
+
+  #hud { position:fixed; left:16px; top:14px; display:none; flex-direction:column; gap:8px; }
+
+  /* ---- タイトル画面 ---- */
+  #title { position:fixed; inset:0; z-index:10; display:flex; align-items:center; justify-content:center;
+           background:linear-gradient(90deg, rgba(235,246,252,.92) 0%, rgba(235,246,252,.78) 38%, rgba(235,246,252,0) 70%); }
+  #title .box { position:absolute; left:6vw; top:50%; transform:translateY(-50%); width:min(460px, 88vw); }
+  #title .stripe { height:10px; border-radius:6px; margin-bottom:14px; background:linear-gradient(90deg,#1fa463 0 33%,#2f7ff0 33% 66%,#ff8a2a 66%); }
+  #title .tag { font-size:15px; font-weight:800; color:#2f7ff0; letter-spacing:.2em; margin-bottom:4px; }
+  #title h1 { margin:0 0 28px; line-height:1.12; font-weight:900; color:#1fa463; letter-spacing:.02em;
+              text-shadow:0 3px 0 #fff, 0 -3px 0 #fff, 3px 0 0 #fff, -3px 0 0 #fff, 3px 3px 0 #fff, -3px -3px 0 #fff, 3px -3px 0 #fff, -3px 3px 0 #fff, 0 8px 18px rgba(20,80,60,.28); }
+  #title h1 .a { display:block; font-size:clamp(40px, 6.4vw, 72px); }
+  #title h1 .b { display:block; font-size:clamp(28px, 4.4vw, 50px); color:#ff7a2a; }
+  .menu { display:flex; flex-direction:column; gap:12px; }
+  .menu[hidden] { display:none; }
+  .menu h3 { margin:0 0 2px; font-size:18px; }
+  .mbtn { border:0; font:inherit; font-size:21px; font-weight:900; letter-spacing:.08em; text-align:left; cursor:pointer;
+          padding:14px 24px; border-radius:16px; background:#fff; color:var(--ink); box-shadow:0 5px 0 #b9c6cf, 0 10px 20px rgba(30,60,90,.18);
+          transition:transform .08s, background .08s; }
+  .mbtn:hover { background:#f0fbf5; transform:translateX(6px); }
+  .mbtn:active { transform:translate(6px,3px); box-shadow:0 2px 0 #b9c6cf; }
+  .mbtn.primary { background:var(--green); color:#fff; box-shadow:0 5px 0 #14744a, 0 10px 20px rgba(20,80,60,.25); }
+  .mbtn.primary:hover { background:#25b872; }
+  .mbtn.back { font-size:16px; padding:10px 20px; background:#e9eff3; box-shadow:0 4px 0 #b9c6cf; }
+  .slot { display:flex; gap:8px; align-items:stretch; }
+  .slot-main { flex:1; border:0; font:inherit; cursor:pointer; text-align:left; padding:12px 20px; border-radius:16px; background:#fff; color:var(--ink);
+               box-shadow:0 5px 0 #b9c6cf, 0 10px 20px rgba(30,60,90,.18); display:flex; flex-direction:column; gap:2px; transition:transform .08s, background .08s; }
+  .slot-main:hover { background:#f0fbf5; transform:translateX(6px); }
+  .slot-main .sn { font-size:17px; font-weight:900; color:var(--green); }
+  .slot-main .si { font-size:14px; font-weight:700; color:#5b6b75; }
+  .slot-del { border:0; font:inherit; font-size:13px; font-weight:800; cursor:pointer; width:92px; border-radius:14px; background:#fff; color:#c0392b;
+              box-shadow:0 5px 0 #e3b3ad, 0 10px 20px rgba(30,60,90,.12); }
+  .slot-del:hover { background:#fff1ef; }
+  .slot-del.armed { background:#e5483b; color:#fff; box-shadow:0 5px 0 #a8281d; }
+  .opt-empty { padding:26px 20px; border-radius:16px; background:rgba(255,255,255,.8); font-weight:800; color:#8a98a1; text-align:center; }
+  #money { padding:8px 20px; font-size:28px; font-weight:900; color:#157a48; letter-spacing:.5px; }
+  #exp { padding:8px 16px 10px; width:230px; }
+  #exp .row { display:flex; justify-content:space-between; align-items:baseline; font-weight:800; }
+  #lv-v { font-size:20px; color:var(--blue); }
+  #exp-v { font-size:12px; color:#6b7c86; }
+  #exp-track { height:9px; margin-top:5px; border-radius:6px; background:#dbe5ec; overflow:hidden; }
+  #exp-bar { height:100%; width:0; border-radius:6px; background:linear-gradient(90deg,#4aa3ff,#2f7ff0); transition:width .25s; }
+
+  #prompt { position:fixed; left:50%; bottom:34px; transform:translateX(-50%); padding:10px 22px; font-size:19px; font-weight:900; display:none; }
+  #prompt kbd { display:inline-block; min-width:26px; padding:1px 7px; margin-right:8px; border-radius:7px; background:var(--ink); color:#fff; font:inherit; font-size:.85em; text-align:center; }
+  #toast { position:fixed; left:50%; top:24px; transform:translateX(-50%); padding:8px 20px; font-weight:800; opacity:0; transition:opacity .25s; pointer-events:none; }
+  #toast.on { opacity:1; }
+
+  .btn { border:0; font:inherit; font-weight:800; cursor:pointer; padding:10px 16px; border-radius:12px; background:var(--blue); color:#fff; box-shadow:0 4px 0 #1d58b3; transition:transform .05s; }
+  .btn:active { transform:translateY(3px); box-shadow:0 1px 0 #1d58b3; }
+  .btn.sub { background:#fff; color:var(--ink); box-shadow:0 4px 0 #b9c6cf; }
+  .btn.green { background:var(--green); box-shadow:0 4px 0 #14744a; }
+  .btn:disabled { background:#c3ccd2; color:#f4f6f7; box-shadow:0 4px 0 #a5b0b8; cursor:not-allowed; }
+
+  #shop, #order { position:fixed; right:16px; top:16px; width:392px; max-height:calc(100% - 32px); overflow:auto; padding:14px 14px 10px; display:none; }
+  #shop h2, #order h2 { margin:0 0 4px; font-size:18px; }
+  #order .note { font-size:12px; color:#6b7c86; margin-bottom:6px; }
+  .up { display:flex; align-items:center; gap:10px; padding:9px 4px; border-top:1px solid #e1e8ed; }
+  .up .t { flex:1; min-width:0; }
+  .up .n { font-weight:800; font-size:14px; }
+  .up .d { font-size:12px; color:#6b7c86; }
+  .up .lv { font-size:12px; font-weight:800; color:var(--green); }
+  .up .btn { padding:7px 12px; font-size:14px; min-width:92px; }
+  #shop .foot, #order .foot { border-top:1px solid #e1e8ed; padding-top:8px; text-align:right; }
+  #shop .foot button, #order .foot button { font-size:12px; padding:5px 10px; }
+
+  /* ---- 握りモード（一人称 + 店内ワイプ） ---- */
+  body.crafting #hud, body.shelving #hud { left:auto; right:16px; align-items:flex-end; }
+  #wipe { position:fixed; left:16px; top:16px; width:min(380px, 32vw); aspect-ratio:16/9; border:3px solid #fff; border-radius:10px;
+          box-shadow:0 6px 18px rgba(30,60,90,.35); pointer-events:none; display:none; z-index:5; }
+  #wipe .wl { position:absolute; left:8px; top:6px; font-size:11px; font-weight:900; color:#fff; background:rgba(34,49,58,.78); padding:1px 9px; border-radius:99px; }
+  #wipe-q { position:absolute; left:-3px; top:100%; margin-top:8px; padding:5px 12px; font-size:13px; font-weight:800; border-radius:12px;
+            background:var(--paper); box-shadow:0 4px 12px rgba(30,60,90,.2); }
+  #wipe-q.alert { background:#e5483b; color:#fff; animation:blink .8s infinite alternate; }
+  @keyframes blink { to { filter:brightness(1.18); } }
+  #craftui { position:fixed; inset:0; pointer-events:none; display:none; z-index:4; }
+  #craftui .steps { position:absolute; left:50%; bottom:22px; transform:translateX(-50%); display:flex; gap:8px; }
+  #craftui .step { padding:7px 14px; border-radius:99px; font-size:clamp(11px,1.5vw,15px); white-space:nowrap; font-weight:800; background:rgba(255,255,255,.72); color:#6b7c86; box-shadow:0 3px 10px rgba(30,60,90,.2); }
+  #craftui .step.on { background:var(--green); color:#fff; transform:scale(1.08); }
+  #craftui .step b { margin-right:6px; }
+  #press { position:absolute; left:50%; top:60%; transform:translateX(-50%); width:260px; display:none; text-align:center; font-weight:900; color:#fff; text-shadow:0 1px 4px rgba(0,0,0,.5); }
+  #press-t { margin-bottom:4px; font-size:15px; }
+  #press-b { height:14px; border-radius:8px; background:rgba(20,40,60,.55); overflow:hidden; border:2px solid #fff; }
+  #press-i { height:100%; width:0; background:linear-gradient(90deg,#ffb347,#ff7a2a); }
+  /* ---- 棚モード（棚にアップ） ---- */
+  #shelfui { position:fixed; inset:0; pointer-events:none; display:none; z-index:4; }
+  #shelfui .panel { position:absolute; left:16px; top:50%; transform:translateY(-50%); width:280px; padding:14px; pointer-events:auto; }
+  #shelfui h3 { margin:0 0 2px; font-size:17px; }
+  #shelfui .sub { font-size:12px; color:#6b7c86; margin-bottom:8px; line-height:1.5; }
+  .trow { display:flex; align-items:center; gap:8px; padding:6px 0; border-top:1px solid #e1e8ed; }
+  .tn { width:46px; font-weight:800; font-size:13px; }
+  .tsel { flex:1; border:0; font:inherit; font-weight:800; padding:8px 10px; border-radius:10px; background:#e8f6ee; color:#157a48; cursor:pointer; box-shadow:0 3px 0 #b9d9c6; text-align:left; }
+  .tsel:hover { background:#d8f0e1; }
+  .tc { font-size:12px; font-weight:700; color:#6b7c86; min-width:46px; text-align:right; }
+  .hold { margin-top:8px; padding-top:8px; border-top:1px solid #e1e8ed; font-size:13px; font-weight:700; line-height:1.6; }
+  .alertq { margin-top:8px; padding:6px 10px; border-radius:10px; background:#e5483b; color:#fff; font-size:13px; font-weight:800; }
+  #shelf-exit { position:absolute; right:16px; bottom:16px; pointer-events:auto; font-size:14px; padding:9px 16px; }
+  #pause { position:fixed; inset:0; z-index:20; display:none; align-items:center; justify-content:center; background:rgba(20,40,60,.4); }
+  #pause .box { padding:26px 34px; min-width:300px; text-align:center; }
+  #pause h2 { margin:0 0 4px; font-size:26px; letter-spacing:.2em; }
+  #pause .hint { font-size:13px; color:#6b7c86; margin-bottom:16px; }
+  #pause .menu { gap:10px; }
+  #craft-exit { position:absolute; right:16px; bottom:16px; pointer-events:auto; font-size:14px; padding:9px 16px; }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div id="title">
+  <div class="box">
+    <div class="stripe"></div>
+    <div class="tag">🍙 3D箱庭コンビニシミュレーション</div>
+    <h1><span class="a">コンビニ</span><span class="b">はじめちゃいました</span></h1>
+    <div id="menu-main" class="menu">
+      <button class="mbtn primary" data-act="start">スタート</button>
+      <button class="mbtn" data-act="options">オプション</button>
+      <button class="mbtn" data-act="quit">ゲームを終了する</button>
+    </div>
+    <div id="menu-slots" class="menu" hidden></div>
+    <div id="menu-options" class="menu" hidden>
+      <h3>オプション</h3>
+      <div class="opt-empty">（準備中）</div>
+      <button class="mbtn back" data-act="back">もどる</button>
+    </div>
+  </div>
+</div>
+
+<div id="hud">
+  <div id="money" class="card"><span id="money-v">¥0</span></div>
+  <div id="exp" class="card">
+    <div class="row"><span id="lv-v">Lv.1</span><span id="exp-v">EXP 0 / 40</span></div>
+    <div id="exp-track"><div id="exp-bar"></div></div>
+  </div>
+</div>
+<div id="prompt" class="card"></div>
+<div id="toast" class="card"></div>
+<div id="shop" class="card"></div>
+<div id="order" class="card"></div>
+
+<div id="shelfui">
+  <div class="panel card">
+    <h3>棚の段</h3>
+    <div class="sub">段ごとに置くおにぎりを決めておくと、持ってきた分がその段に並びます。ボタンで種類を切り替え。</div>
+    <div id="tier-rows"></div>
+  </div>
+  <button class="btn sub" id="shelf-exit">とじる [E]</button>
+</div>
+
+<div id="pause"><div class="box card">
+  <h2>ポーズ</h2><div class="hint">Esc でもどる</div>
+  <div class="menu">
+    <button class="mbtn primary" data-pause="resume">再開</button>
+    <button class="mbtn" data-pause="title">タイトルへ戻る</button>
+  </div>
+</div></div>
+
+<div id="wipe"><span class="wl">店内ライブ</span><div id="wipe-q"></div></div>
+<div id="craftui">
+  <div class="steps">
+    <span class="step"><b>①</b>ごはんを取る</span>
+    <span class="step"><b>②</b>具材を入れる</span>
+    <span class="step"><b>③</b>長押しで握る</span>
+    <span class="step"><b>④</b>トレーに置く</span>
+  </div>
+  <div id="press"><div id="press-t">握る！ そのまま押し続けて</div><div id="press-b"><div id="press-i"></div></div></div>
+  <button class="btn sub" id="craft-exit">やめる [E]</button>
+</div>
+
+<script src="dist/game.js"></script>
+</body>
+</html>
