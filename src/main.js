@@ -30,7 +30,7 @@ const COOK_TIME = 6;
 const DAY_START = 7;
 const DAY_END = 22;
 const DAY_SECONDS = 240; // 1日の長さ(実時間)
-const STATION_RICE_MAX = 16;
+const STATION_RICE_MAX = 24;
 const TRAY_MAX = 12;
 const DELIVERY_SECONDS = 8;
 const expNeed = (lv) => 40 + 25 * (lv - 1);
@@ -159,7 +159,7 @@ try { // 旧セーブをスロット1へ
 
 const UPG = [
   { id: 'shelfCap', name: '棚の収納量アップ', desc: '1段に置けるおにぎりの数', costs: [600, 1200, 2400, 4800], vals: [4, 8, 12, 16, 20], fmt: (v) => `${v}個` },
-  { id: 'cooker', name: '炊飯器を大型化', desc: '1回で炊けるごはんの量', costs: [600, 1200, 2400], vals: [4, 6, 8, 10], fmt: (v) => `${v}膳` },
+  { id: 'cooker', name: '炊飯器を大型化', desc: '1回で炊けるごはんの量', costs: [600, 1200, 2400, 4800, 9000, 16000], vals: [4, 6, 8, 10, 13, 16, 20], fmt: (v) => `${v}膳` },
   { id: 'craft', name: '握りの腕前', desc: 'おにぎりを握る時間', costs: [700, 1400, 2800], vals: [1.6, 1.2, 0.9, 0.6], fmt: (v) => `${v}秒` },
   { id: 'carry', name: '運搬カゴ', desc: '一度に運べる数', costs: [500, 1500], vals: [8, 12, 16], fmt: (v) => `${v}個` },
   { id: 'poster', name: '集客ポスター', desc: 'お客さんの来店ペース', costs: [1000, 2000, 4000], vals: [1, 1.25, 1.5, 1.8], fmt: (v) => `×${v}` },
@@ -2219,6 +2219,8 @@ function updateWorkers(dt) { workers.forEach((w) => w.update(dt)); }
 let shopDirty = true;
 let orderDirty = true;
 function applyUpgrades() {
+  cookerModel.setTier(S.up.cooker);
+  shadowize(cookerModel.group);
   shelves.forEach((sh) => {
     sh.cap = 4 * tierCap();
     sh.tiers.forEach((t, i) => { if (t.n === 0) t.kind = S.tiers[i]; }); // 空の段は保存した設定に合わせる

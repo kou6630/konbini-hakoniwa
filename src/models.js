@@ -393,52 +393,99 @@ export function buildShelf() {
   };
 }
 
-/* ---------- 炊飯器 ---------- */
+/* ---------- 炊飯器（大型化の段階ごとに見た目が変わる） ---------- */
+// 段階: 0=家庭用 1=大きめ 2=ステンレス 3=業務用 4=業務用ツイン 5=金縁ツイン 6=黄金のトリプル
+const COOKER_TIERS = [
+  { base: '#cfd6db', top: '#a8b4bc', pots: 1, s: 0.88, body: '#f6f2ea', band: '#d6453d', lid: '#f6f2ea', panel: false },
+  { base: '#cfd6db', top: '#a8b4bc', pots: 1, s: 0.9, body: '#fbf8f1', band: '#3f7fd0', lid: '#fbf8f1', panel: false },
+  { base: '#c4ccd2', top: '#8d99a3', pots: 1, s: 0.9, body: '#d9dee2', band: '#2f3a40', lid: '#e4e8eb', panel: true },
+  { base: '#9ea8b0', top: '#6f7b85', pots: 1, s: 0.9, body: '#e8ecef', band: '#1f8fa0', lid: '#f2f5f7', panel: true, tall: 1.25 },
+  { base: '#8a949c', top: '#5f6a73', pots: 2, s: 0.74, body: '#e8ecef', band: '#1f8fa0', lid: '#f2f5f7', panel: true, tall: 1.1 },
+  { base: '#5b646b', top: '#3f474d', pots: 2, s: 0.78, body: '#f2f5f7', band: '#d4a82a', lid: '#ffffff', panel: true, tall: 1.3, trim: '#d4a82a' },
+  { base: '#3a3f44', top: '#d4a82a', pots: 3, s: 0.52, body: '#f4d46a', band: '#a8782a', lid: '#ffe69a', panel: true, tall: 1.35, trim: '#d4a82a' },
+];
+export const COOKER_MAX_TIER = COOKER_TIERS.length - 1;
 export function buildCooker() {
   const g = new THREE.Group();
-  bx(g, [1.75, 0.9, 1.0], '#cfd6db', [0, 0, 0], { r: 0.05 });
-  bx(g, [1.85, 0.07, 1.1], '#a8b4bc', [0, 0.9, 0], { r: 0.03 });
-  const c = new THREE.Group();
-  c.position.set(-0.2, 0.97, 0);
-  c.scale.setScalar(0.88);
-  g.add(c);
-  cy(c, 0.52, 0.56, 0.62, '#f6f2ea', [0, 0, 0]);
-  cy(c, 0.575, 0.575, 0.1, '#d6453d', [0, 0.18, 0]);
-  const lid = sp(c, 0.52, '#f6f2ea', [0, 0.62, 0], {}, 0.45);
-  cy(c, 0.09, 0.09, 0.1, '#444', [0, 0.84, 0]);
-  bx(c, [0.5, 0.2, 0.05], '#2f3a40', [0, 0.28, 0.54], { r: 0.02 });
-  const ledMat = new THREE.MeshStandardMaterial({ color: '#555', emissive: '#000', roughness: 0.4 });
-  const led = new THREE.Mesh(new THREE.SphereGeometry(0.045, 12, 10), ledMat);
-  led.position.set(0.14, 0.38, 0.575);
-  c.add(led);
-  const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.045, 12, 10), M('#e8e8e8'));
-  lamp.position.set(-0.14, 0.38, 0.575);
-  c.add(lamp);
-
-  const steam = [];
-  const smat = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.6, depthWrite: false });
-  for (let i = 0; i < 6; i++) {
-    const s = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), smat.clone());
-    s.visible = false;
-    c.add(s);
-    steam.push(s);
+  const dyn = new THREE.Group();
+  g.add(dyn);
+  let leds = [];
+  let steams = [];
+  const clear = () => {
+    dyn.children.slice().forEach((o) => {
+      dyn.remove(o);
+      o.traverse((m) => { if (m.isMesh) { m.geometry.dispose(); } });
+    });
+    leds = []; steams = [];
+  };
+  function setTier(tier) {
+    const T = COOKER_TIERS[Math.max(0, Math.min(COOKER_MAX_TIER, tier))];
+    clear();
+    bx(dyn, [1.75, 0.9, 1.0], T.base, [0, 0, 0], { r: 0.05 });
+    bx(dyn, [1.85, 0.07, 1.1], T.top, [0, 0.9, 0], { r: 0.03 });
+    if (T.trim) {
+      bx(dyn, [1.78, 0.05, 1.03], T.trim, [0, 0.55, 0], { r: 0.01 });
+      bx(dyn, [1.78, 0.05, 1.03], T.trim, [0, 0.12, 0], { r: 0.01 });
+    }
+    if (T.panel) bx(dyn, [0.7, 0.16, 0.04], '#1b2227', [0.0, 0.7, 0.51], { r: 0.015 });
+    const n = T.pots;
+    const span = n === 1 ? 0 : (n === 2 ? 0.8 : 1.12);
+    const tall = T.tall || 1;
+    for (let i = 0; i < n; i++) {
+      const c = new THREE.Group();
+      const px = n === 1 ? -0.2 : -span / 2 + (span / (n - 1)) * i;
+      c.position.set(px, 0.97, 0);
+      c.scale.set(T.s, T.s * tall, T.s);
+      dyn.add(c);
+      cy(c, 0.52, 0.56, 0.62, T.body, [0, 0, 0]);
+      cy(c, 0.575, 0.575, 0.1, T.band, [0, 0.18, 0]);
+      if (T.trim) cy(c, 0.58, 0.58, 0.04, T.trim, [0, 0.52, 0]);
+      sp(c, 0.52, T.lid, [0, 0.62, 0], {}, 0.45);
+      cy(c, 0.09, 0.09, 0.1, T.trim || '#444', [0, 0.84, 0]);
+      bx(c, [0.5, 0.2, 0.05], '#2f3a40', [0, 0.28, 0.54], { r: 0.02 });
+      const ledMat = new THREE.MeshStandardMaterial({ color: '#555', emissive: '#000', roughness: 0.4 });
+      const led = new THREE.Mesh(new THREE.SphereGeometry(0.045, 12, 10), ledMat);
+      led.position.set(0.14, 0.38, 0.575);
+      c.add(led);
+      leds.push(ledMat);
+      const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.045, 12, 10), M('#e8e8e8'));
+      lamp.position.set(-0.14, 0.38, 0.575);
+      c.add(lamp);
+      const smat = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.6, depthWrite: false });
+      for (let k = 0; k < 6; k++) {
+        const st = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), smat.clone());
+        st.visible = false;
+        c.add(st);
+        steams.push({ m: st, k, px: n === 1 ? 0 : 0 });
+      }
+    }
+    // 食器・しゃもじ
+    if (n === 1) {
+      cy(dyn, 0.12, 0.1, 0.1, '#ffffff', [0.6, 0.97, 0.25], 16);
+      bx(dyn, [0.06, 0.02, 0.3], '#d8b98a', [0.62, 1.02, 0.25], { r: 0.008 });
+    } else {
+      cy(dyn, 0.1, 0.08, 0.08, '#ffffff', [0.78, 0.97, 0.3], 16);
+      bx(dyn, [0.05, 0.02, 0.26], '#d8b98a', [0.8, 1.01, 0.3], { r: 0.008 });
+    }
   }
-  // 食器・しゃもじ
-  cy(g, 0.12, 0.1, 0.1, '#ffffff', [0.6, 0.97, 0.25], 16);
-  bx(g, [0.06, 0.02, 0.3], '#d8b98a', [0.62, 1.02, 0.25], { r: 0.008 });
+  setTier(0);
   return {
     group: g,
+    setTier,
     setLed(state) {
       const col = state === 'cooking' ? '#ff9a1f' : state === 'ready' ? '#38e07b' : '#555555';
-      ledMat.color.set(col);
-      ledMat.emissive.set(state === 'idle' ? '#000000' : col);
+      leds.forEach((ledMat) => {
+        ledMat.color.set(col);
+        ledMat.emissive.set(state === 'idle' ? '#000000' : col);
+      });
     },
     animateSteam(t, on) {
-      steam.forEach((s, i) => {
+      steams.forEach((o, i) => {
+        const s = o.m;
         s.visible = on;
         if (!on) return;
-        const k = (t * 0.6 + i / steam.length) % 1;
-        s.position.set(Math.sin(i * 2.1 + t) * 0.15, 0.9 + k * 1.1, Math.cos(i * 1.7) * 0.12);
+        const k = (t * 0.6 + o.k / 6 + i * 0.13) % 1;
+        s.position.set(Math.sin(o.k * 2.1 + t) * 0.15, 0.9 + k * 1.1, Math.cos(o.k * 1.7) * 0.12);
         s.scale.setScalar(0.6 + k * 1.2);
         s.material.opacity = 0.55 * (1 - k);
       });
