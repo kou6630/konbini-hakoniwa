@@ -24,11 +24,24 @@ export const LAYOUT = {
   spawn: { x: 0.125, z: 6.3 },
   view: { x: -3.6, z: -1.25 },
   fridge: { x: 4.25, z: -7.725, use: { x: 4.25, z: -5.8 } },
+  // Lv.4 サンドイッチ台（左壁ぎわ）/ サンドの売り場（増築エリアの奥）
+  sandTable: { x: -6.45, z: -5.15, rot: Math.PI / 2, len: 1.5, use: { x: -5.2, z: -5.15 } },
+  sandCase: { x: 5.5, z: -7.725, rot: 0, use: { x: 5.6, z: -5.8 } },
+  // Lv.5 揚げ物台（奥の壁ぎわ）/ ホットスナックケース（増築エリアの右壁ぎわ）
+  fryer: { x: -4.0, z: -7.85, rot: 0, len: 1.4, use: { x: -4.0, z: -6.55 } },
+  hotCase: { x: 5.35, z: -3.1, rot: -Math.PI / 2, use: { x: 3.75, z: -3.1 } },
+};
+/** レベルで解禁される設備の当たり判定 */
+export const UNLOCK_COLLIDERS = {
+  sand: [{ x0: -7.0, x1: -5.95, z0: -5.9, z1: -4.4 }],
+  fry: [{ x0: -4.7, x1: -3.3, z0: -8.5, z1: -7.35 }],
+  sandCase: [{ x0: 5.0, x1: 6.0, z0: -8.5, z1: -7.1 }],
+  hotCase: [{ x0: 4.725, x1: 5.975, z0: -3.6, z1: -2.6 }],
 };
 /** Lv.3 の増築で追加される当たり判定 */
 export const EXP_COLLIDERS = [
   { x0: 3.75, x1: 4.75, z0: -8.5, z1: -7.1 }, // 水の冷蔵庫
-  { x0: -4.25, x1: -2.85, z0: -8.2, z1: -6.8 }, // 水のケース（バックヤード）
+  { x0: -3.3, x1: -2.65, z0: -8.25, z1: -6.45 }, // 飲み物のケース（バックヤード）
 ];
 
 /* 当たり判定(AABB) */
@@ -143,7 +156,7 @@ function plane(parent, w, h, tex, [x, y, z], ry = 0, opts = {}) {
 }
 
 /* ---------- おにぎり（shio / ume / okaka） ---------- */
-export function makeOnigiri(scale = 1, kind = 'shio') {
+export function makeOnigiri(scale = 1, kind = 'shio', bag = false) {
   const g = new THREE.Group();
   const r = 0.2 * scale;
   const th = 0.15 * scale;
@@ -174,6 +187,24 @@ export function makeOnigiri(scale = 1, kind = 'shio') {
         g.add(f);
       }
     }
+  }
+  if (bag) {
+    // フィルムの袋に入った見た目：半透明の袋＋下のシール（種類ごとに色違い）＋てっぺんの折り返し
+    const film = new THREE.Mesh(
+      new THREE.CylinderGeometry(r * 1.24, r * 1.24, th * 2.0, 3),
+      new THREE.MeshStandardMaterial({ color: '#ffffff', transparent: true, opacity: 0.3, roughness: 0.12, depthWrite: false }),
+    );
+    film.rotation.x = -Math.PI / 2;
+    film.userData.noShadow = true;
+    g.add(film);
+    const tone = { shio: '#4aa3ff', ume: '#e04a5a', okaka: '#e8a04a' }[kind] || '#4aa3ff';
+    const seal = new THREE.Mesh(new THREE.BoxGeometry(r * 1.55, r * 0.2, th * 2.0 + 0.012 * scale), M(tone, { roughness: 0.4 }));
+    seal.position.y = -r * 0.5;
+    g.add(seal);
+    const tab = new THREE.Mesh(new THREE.BoxGeometry(r * 0.5, r * 0.22, th * 1.1), new THREE.MeshStandardMaterial({ color: '#ffffff', transparent: true, opacity: 0.5, roughness: 0.2, depthWrite: false }));
+    tab.position.y = r * 1.28;
+    tab.userData.noShadow = true;
+    g.add(tab);
   }
   g.position.y = r * 0.5; // 底面が y=0 になるように
   const wrap = new THREE.Group();
@@ -287,7 +318,7 @@ export function buildShelf() {
     const key = t * 100 + i * 4 + KIND_IDS.indexOf(k);
     let o = cache.get(key);
     if (!o) {
-      o = makeOnigiri(0.75, k);
+      o = makeOnigiri(0.75, k, true);
       const col = i % 5, row = Math.floor(i / 5);
       o.position.set(-0.72 + col * 0.36, TIER_Y[t] + 0.025, 0.33 - row * 0.22);
       o.rotation.y = (Math.random() - 0.5) * 0.12;
@@ -541,7 +572,9 @@ export function buildBackDoor() {
   return { group: g, pivot };
 }
 
-/* ---------- 水の冷蔵庫（Lv.3） 幅1.0m × 奥行1.25m ---------- */
+/* ---------- 飲み物の冷蔵庫（Lv.3） 幅1.0m × 奥行1.25m。水・お茶・コーヒーが並ぶ ---------- */
+const DRINK_COLORS = { water: '#8fd0ff', tea: '#8bbf5a', coffee: '#6b4a32' };
+const DRINK_LABELS = { water: '#2f7ff0', tea: '#2f8f4f', coffee: '#e8d4a8' };
 export function buildFridge() {
   const g = new THREE.Group();
   const W = 1.0, D = 1.25, hw = W / 2, hd = D / 2;
@@ -552,23 +585,27 @@ export function buildFridge() {
   const levels = [0.55, 0.95, 1.35];
   levels.forEach((y) => bx(g, [W - 0.14, 0.04, D - 0.1], '#ffffff', [0, y, 0], { r: 0.01 }));
   bx(g, [W + 0.12, 0.2, D + 0.12], '#2f7ff0', [0, 1.78, 0]);
-  const sign = plane(g, W - 0.1, 0.18, signTex('お水', '#2f7ff0', '#ffffff', 512, 64, 'bold 46px "Yu Gothic UI","Meiryo",sans-serif'), [0, 1.88, hd + 0.065]);
+  const sign = plane(g, W - 0.1, 0.18, signTex('飲み物', '#2f7ff0', '#ffffff', 512, 64, 'bold 46px "Yu Gothic UI","Meiryo",sans-serif'), [0, 1.88, hd + 0.065]);
   sign.castShadow = false;
   bx(g, [W - 0.2, 0.03, D - 0.2], '#bfe9ff', [0, 1.7, 0.0], { r: 0.005, mat: { emissive: '#8fd3ff' } });
 
-  const bodyMat = new THREE.MeshStandardMaterial({ color: '#8fd0ff', transparent: true, opacity: 0.88, roughness: 0.15 });
+  const bodyMats = {};
+  Object.keys(DRINK_COLORS).forEach((k) => { bodyMats[k] = new THREE.MeshStandardMaterial({ color: DRINK_COLORS[k], transparent: true, opacity: 0.88, roughness: 0.15 }); });
+  const labelMats = {};
+  Object.keys(DRINK_LABELS).forEach((k) => { labelMats[k] = M(DRINK_LABELS[k]); });
   const mkBottle = (parent, x, y, z) => {
     const b = new THREE.Group();
     b.position.set(x, y, z);
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.2, 14), bodyMat);
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.2, 14), bodyMats.water);
     body.position.y = 0.1;
-    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.045, 0.06, 14), bodyMat);
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.045, 0.06, 14), bodyMats.water);
     neck.position.y = 0.23;
     const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.03, 12), M('#ffffff'));
     cap.position.y = 0.275;
-    const label = new THREE.Mesh(new THREE.CylinderGeometry(0.047, 0.047, 0.07, 14), M('#2f7ff0'));
+    const label = new THREE.Mesh(new THREE.CylinderGeometry(0.047, 0.047, 0.07, 14), labelMats.water);
     label.position.y = 0.1;
     b.add(body, neck, cap, label);
+    b.userData.parts = { body, neck, label };
     parent.add(b);
     return b;
   };
@@ -579,8 +616,7 @@ export function buildFridge() {
     const cx = k % 2 ? 0.26 : -0.26;
     const cz = k < 2 ? 0.28 : -0.28;
     const y = levels[lv] + 0.02;
-    mkBottle(grp, cx - 0.07, y, cz);
-    mkBottle(grp, cx + 0.07, y, cz);
+    grp.userData.bottles = [mkBottle(grp, cx - 0.07, y, cz), mkBottle(grp, cx + 0.07, y, cz)];
     grp.visible = false;
     g.add(grp);
     slots.push(grp);
@@ -592,7 +628,223 @@ export function buildFridge() {
   bx(g, [0.04, 0.5, 0.05], '#9aa6b0', [hw - 0.12, 0.8, hd + 0.05], { r: 0.01 });
   return {
     group: g,
-    setCount(n) { slots.forEach((s2, i) => { s2.visible = i < n; }); },
+    /** kinds: ['water','tea',...] 先頭から順に並べる */
+    setItems(kinds) {
+      slots.forEach((slot, i) => {
+        const k = kinds[i];
+        slot.visible = !!k;
+        if (!k) return;
+        slot.userData.bottles.forEach((b) => {
+          b.userData.parts.body.material = bodyMats[k];
+          b.userData.parts.neck.material = bodyMats[k];
+          b.userData.parts.label.material = labelMats[k];
+        });
+      });
+    },
+  };
+}
+
+/* ---------- サンドイッチ（袋入り）・揚げ物 ---------- */
+const SAND_FILL = { tamago: '#ffd84a', ham: '#f08a8a' };
+const SAND_TONE = { tamago: '#ffb300', ham: '#ef6c6c' };
+export function makeSandwich(kind = 'tamago', scale = 1) {
+  const g = new THREE.Group();
+  const r = 0.16 * scale;
+  const bread = M('#f6e3b4', { roughness: 0.9 });
+  const mk = (rad, y0, h, mat) => {
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad, h, 3), mat);
+    m.position.y = y0 + h / 2;
+    g.add(m);
+    return m;
+  };
+  mk(r, 0.0, 0.04 * scale, bread);
+  mk(r * 0.94, 0.04 * scale, 0.036 * scale, M(SAND_FILL[kind] || '#ffd84a', { roughness: 0.7 }));
+  mk(r, 0.076 * scale, 0.04 * scale, bread);
+  // 袋（半透明）と種類シール
+  const film = new THREE.Mesh(new THREE.CylinderGeometry(r * 1.18, r * 1.18, 0.15 * scale, 3), new THREE.MeshStandardMaterial({ color: '#ffffff', transparent: true, opacity: 0.28, roughness: 0.12, depthWrite: false }));
+  film.position.y = 0.058 * scale;
+  film.userData.noShadow = true;
+  g.add(film);
+  const seal = new THREE.Mesh(new THREE.BoxGeometry(r * 1.5, 0.02 * scale, 0.04 * scale), M(SAND_TONE[kind] || '#ffb300'));
+  seal.position.set(0, 0.13 * scale, r * 0.2);
+  g.add(seal);
+  return g;
+}
+export function makeFried(kind = 'karaage', scale = 1) {
+  const g = new THREE.Group();
+  const paper = bx(g, [0.3 * scale, 0.05 * scale, 0.2 * scale], '#fff3d6', [0, 0, 0], { r: 0.01 * scale });
+  paper.userData.noShadow = false;
+  bx(g, [0.31 * scale, 0.012 * scale, 0.04 * scale], '#d6453d', [0, 0.04 * scale, 0.09 * scale], { r: 0.002 });
+  if (kind === 'karaage') {
+    [[-0.07, 0.0, 0.03], [0.05, 0.0, -0.02], [-0.01, 0.045, 0.0], [0.08, 0.0, 0.05]].forEach(([x, y, z], i) => {
+      const m = sp(g, 0.052 * scale, i % 2 ? '#c27a2b' : '#b8691f', [x * scale, 0.07 * scale + y * scale, z * scale], { roughness: 0.85 });
+      m.scale.set(1.05, 0.88, 0.95);
+    });
+  } else {
+    [[-0.06, 0.0], [0.07, 0.01]].forEach(([x, z], i) => {
+      const m = sp(g, 0.062 * scale, i ? '#b9722a' : '#c47a2c', [x * scale, 0.075 * scale, z * scale], { roughness: 0.9 });
+      m.scale.set(1.3, 0.8, 0.9);
+    });
+    for (let i = 0; i < 10; i++) sp(g, 0.01 * scale, '#e3a84f', [Math.cos(i * 2.1) * 0.09 * scale, 0.1 * scale, Math.sin(i * 1.7) * 0.05 * scale]);
+  }
+  return g;
+}
+
+/* ---------- 売り場ケース（サンドイッチ冷蔵 / ホットスナック保温） 幅1.0m × 奥行1.25m ---------- */
+export function buildDisplayCase(type) {
+  const hot = type === 'hot';
+  const g = new THREE.Group();
+  const W = 1.0, D = 1.25, hw = W / 2, hd = D / 2;
+  const tone = hot ? '#d6453d' : '#f2a33a';
+  bx(g, [W, 0.2, D], '#cfd8dc', [0, 0, 0]);
+  bx(g, [W, 1.75, 0.07], hot ? '#f4e4dc' : '#f5ecdd', [0, 0.2, -hd + 0.035]);
+  bx(g, [0.07, 1.75, D], hot ? '#f4e4dc' : '#f5ecdd', [-hw + 0.035, 0.2, 0]);
+  bx(g, [0.07, 1.75, D], hot ? '#f4e4dc' : '#f5ecdd', [hw - 0.035, 0.2, 0]);
+  const levels = [0.55, 0.95, 1.35];
+  levels.forEach((y) => bx(g, [W - 0.14, 0.04, D - 0.1], '#ffffff', [0, y, 0], { r: 0.01 }));
+  bx(g, [W + 0.12, 0.2, D + 0.12], tone, [0, 1.78, 0]);
+  const sign = plane(g, W - 0.1, 0.18, signTex(hot ? 'ホットスナック' : 'サンドイッチ', tone, '#ffffff', 512, 64, 'bold 40px "Yu Gothic UI","Meiryo",sans-serif'), [0, 1.88, hd + 0.065]);
+  sign.castShadow = false;
+  bx(g, [W - 0.2, 0.03, D - 0.2], hot ? '#ffd9a0' : '#fff2c8', [0, 1.7, 0.0], { r: 0.005, mat: { emissive: hot ? '#ff9a3c' : '#ffe08a' } });
+  const glass = new THREE.Mesh(new THREE.BoxGeometry(W - 0.1, 1.62, 0.03), new THREE.MeshStandardMaterial({ color: hot ? '#ffe9cf' : '#fff4d6', transparent: true, opacity: 0.16, roughness: 0.05, depthWrite: false }));
+  glass.position.set(0, 1.01, hd + 0.01);
+  glass.userData.noShadow = true;
+  g.add(glass);
+  bx(g, [0.04, 0.5, 0.05], '#9aa6b0', [hw - 0.12, 0.8, hd + 0.05], { r: 0.01 });
+
+  const cache = new Map();
+  const slotPos = (i) => {
+    const lv = Math.floor(i / 4), k = i % 4;
+    return new THREE.Vector3(k % 2 ? 0.2 : -0.2, levels[lv] + 0.025, k < 2 ? 0.28 : -0.28);
+  };
+  const getObj = (i, kind) => {
+    const key = i * 10 + (hot ? ['karaage', 'korokke'].indexOf(kind) : ['tamago', 'ham'].indexOf(kind));
+    let o = cache.get(key);
+    if (!o) {
+      o = hot ? makeFried(kind, 0.9) : makeSandwich(kind, 0.95);
+      o.position.copy(slotPos(i));
+      o.traverse((m) => { if (m.isMesh && !m.userData.noShadow) { m.castShadow = true; m.receiveShadow = true; } });
+      g.add(o);
+      cache.set(key, o);
+    }
+    return o;
+  };
+  return {
+    group: g,
+    setItems(kinds) {
+      cache.forEach((o) => { o.visible = false; });
+      kinds.slice(0, 12).forEach((k, i) => { getObj(i, k).visible = true; });
+    },
+  };
+}
+
+/* ---------- サンドイッチ台（バックヤード）長さ len × 奥行 1.0 ---------- */
+export function buildSandTable(len = 1.5) {
+  const g = new THREE.Group();
+  bx(g, [len, 0.9, 1.0], '#cfd6db', [0, 0, 0], { r: 0.05 });
+  bx(g, [len + 0.1, 0.07, 1.1], '#e8ecef', [0, 0.9, 0], { r: 0.03 });
+  const top = 0.97;
+  // 食パン・まな板・具材
+  bx(g, [0.5, 0.05, 0.4], '#e6c690', [-0.3, top, 0.15], { r: 0.02 });
+  for (let i = 0; i < 4; i++) bx(g, [0.28, 0.025, 0.28], '#f6e3b4', [-0.3, top + 0.05 + i * 0.027, 0.15], { r: 0.008 });
+  cy(g, 0.14, 0.11, 0.1, '#ffffff', [0.25, top, -0.2], 20);
+  sp(g, 0.12, '#ffd84a', [0.25, top + 0.1, -0.2], {}, 0.5);
+  cy(g, 0.14, 0.11, 0.1, '#ffffff', [0.55, top, -0.2], 20);
+  sp(g, 0.12, '#f08a8a', [0.55, top + 0.1, -0.2], {}, 0.5);
+  bx(g, [0.04, 0.02, 0.28], '#b0bcc4', [0.35, top, 0.3], { r: 0.005 });
+  // 出来上がりを置くトレー
+  bx(g, [0.42, 0.03, 0.34], '#f2d49a', [-0.55, top, -0.25], { r: 0.01 });
+  const cache = new Map();
+  const get = (i, kind) => {
+    const key = i * 10 + (kind === 'ham' ? 1 : 0);
+    let o = cache.get(key);
+    if (!o) {
+      o = makeSandwich(kind, 0.8);
+      o.position.set(-0.7 + (i % 2) * 0.28, top + 0.03, -0.3 + Math.floor(i / 2) * 0.12);
+      g.add(o);
+      cache.set(key, o);
+    }
+    return o;
+  };
+  return {
+    group: g,
+    /** 出来上がったものを台の上に見せる（最大4個） */
+    setOutput(kinds) {
+      cache.forEach((o) => { o.visible = false; });
+      kinds.slice(0, 4).forEach((k, i) => { get(i, k).visible = true; });
+    },
+  };
+}
+
+/* ---------- 揚げ物台（バックヤード）長さ len × 奥行 1.0。フライヤー2槽 ---------- */
+export function buildFryer(len = 1.4) {
+  const g = new THREE.Group();
+  bx(g, [len, 0.9, 1.0], '#cfd6db', [0, 0, 0], { r: 0.05 });
+  bx(g, [len + 0.1, 0.07, 1.1], '#a8b4bc', [0, 0.9, 0], { r: 0.03 });
+  const top = 0.97;
+  const oil = [];
+  [-0.32, 0.32].forEach((x) => {
+    bx(g, [0.5, 0.2, 0.55], '#6b7680', [x, top, -0.05], { r: 0.03 });
+    const o = bx(g, [0.42, 0.02, 0.47], '#e8b84a', [x, top + 0.19, -0.05], { r: 0.01, mat: { emissive: '#7a4a00' } });
+    oil.push(o);
+    bx(g, [0.04, 0.04, 0.3], '#2b2b2b', [x, top + 0.2, 0.37], { r: 0.01 }); // バスケットの持ち手
+  });
+  const bubbles = [];
+  const bm = new THREE.MeshBasicMaterial({ color: '#fff3c4', transparent: true, opacity: 0.8, depthWrite: false });
+  for (let i = 0; i < 12; i++) {
+    const b = new THREE.Mesh(new THREE.SphereGeometry(0.025, 8, 6), bm);
+    b.visible = false;
+    g.add(b);
+    bubbles.push(b);
+  }
+  const steam = [];
+  const sm = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.5, depthWrite: false });
+  for (let i = 0; i < 6; i++) {
+    const s2 = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), sm.clone());
+    s2.visible = false;
+    g.add(s2);
+    steam.push(s2);
+  }
+  // 出来上がりを置くバット
+  bx(g, [0.5, 0.03, 0.3], '#d9dde0', [0.0, top, 0.34], { r: 0.01 });
+  const cache = new Map();
+  const get = (i, kind) => {
+    const key = i * 10 + (kind === 'korokke' ? 1 : 0);
+    let o = cache.get(key);
+    if (!o) {
+      o = makeFried(kind, 0.7);
+      o.position.set(-0.22 + (i % 4) * 0.15, top + 0.03, 0.34);
+      g.add(o);
+      cache.set(key, o);
+    }
+    return o;
+  };
+  return {
+    group: g,
+    /** 揚げているあいだ：泡と湯気 */
+    animate(t, on) {
+      oil.forEach((o) => { o.material.emissiveIntensity = on ? 1.4 : 0.3; });
+      bubbles.forEach((b, i) => {
+        b.visible = on;
+        if (!on) return;
+        const side = i < 6 ? -0.32 : 0.32;
+        const k = (t * 2 + i * 0.37) % 1;
+        b.position.set(side + Math.sin(i * 2.7) * 0.15, top + 0.21 + k * 0.05, -0.05 + Math.cos(i * 1.9) * 0.15);
+        b.scale.setScalar(0.5 + k);
+      });
+      steam.forEach((s2, i) => {
+        s2.visible = on;
+        if (!on) return;
+        const k = (t * 0.6 + i / steam.length) % 1;
+        s2.position.set((i % 2 ? 0.32 : -0.32) + Math.sin(i * 2.1 + t) * 0.1, top + 0.3 + k * 0.9, -0.05);
+        s2.scale.setScalar(0.6 + k);
+        s2.material.opacity = 0.45 * (1 - k);
+      });
+    },
+    setOutput(kinds) {
+      cache.forEach((o) => { o.visible = false; });
+      kinds.slice(0, 4).forEach((k, i) => { get(i, k).visible = true; });
+    },
   };
 }
 
@@ -617,14 +869,14 @@ export function buildExpansion() {
   bx(g, [0.25, 0.4, B.z1 - B.z0 + 0.3], '#eceff1', [x1, 0, (B.z0 + B.z1) / 2], { r: 0.03 });
   bx(g, [w + 0.1, 0.4, 0.25], '#eceff1', [cx + 0.05, 0, B.z1], { r: 0.03 });
   // 奥の壁のポスター
-  plane(g, 1.2, 0.8, signTex('冷たい水あります', '#e8f4ff', '#2f7ff0', 512, 340, 'bold 52px "Yu Gothic UI","Meiryo",sans-serif'), [5.3, 1.9, B.z0 + 0.16]);
-  // バックヤード：水のケース
+  plane(g, 1.2, 0.8, signTex('冷たい水あります', '#e8f4ff', '#2f7ff0', 512, 340, 'bold 52px "Yu Gothic UI","Meiryo",sans-serif'), [3.1, 1.9, B.z0 + 0.16]);
+  // バックヤード：飲み物のケース
   for (let l = 0; l < 2; l++)
     for (let c = 0; c < 2; c++) {
-      const x = -3.9 + c * 0.7;
-      bx(g, [0.64, 0.34, 0.44], '#2f7ff0', [x, l * 0.34, -7.5], { r: 0.03 });
-      bx(g, [0.5, 0.1, 0.02], '#ffffff', [x, l * 0.34 + 0.12, -7.27], { r: 0.004 });
-      for (let b = 0; b < 3; b++) cy(g, 0.04, 0.04, 0.1, '#bfe6ff', [x - 0.18 + b * 0.18, l * 0.34 + 0.34, -7.5], 12);
+      const x = -2.98, z = -7.9 + c * 0.7;
+      bx(g, [0.64, 0.34, 0.44], '#2f7ff0', [x, l * 0.34, z], { r: 0.03 });
+      bx(g, [0.02, 0.1, 0.34], '#ffffff', [x + 0.325, l * 0.34 + 0.12, z], { r: 0.004 });
+      for (let b = 0; b < 3; b++) cy(g, 0.04, 0.04, 0.1, '#bfe6ff', [x - 0.18 + b * 0.18, l * 0.34 + 0.34, z], 12);
     }
   g.traverse((o) => {
     if (o.isMesh && !o.userData.noShadow) { o.castShadow = true; o.receiveShadow = true; }

@@ -21,7 +21,7 @@ if ($LASTEXITCODE -ne 0) { throw 'インストーラの作成・アップロー�
 
 # 版番号が変わっても変わらない「固定名」のダウンロード用コピーも、同じリリースに載せる
 #   https://github.com/kou6630/konbini-hakoniwa/releases/latest/download/KonbiniHakoniwa-Setup.exe
-$version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+$version = (Get-Content package.json -Raw -Encoding UTF8 | ConvertFrom-Json).version
 $src = "dist-installer\KonbiniHakoniwa-Setup-$version.exe"
 $fixed = "dist-installer\KonbiniHakoniwa-Setup.exe"
 Copy-Item $src $fixed -Force

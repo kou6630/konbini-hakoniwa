@@ -66,17 +66,17 @@
   .btn.green { background:var(--green); box-shadow:0 4px 0 #14744a; }
   .btn:disabled { background:#c3ccd2; color:#f4f6f7; box-shadow:0 4px 0 #a5b0b8; cursor:not-allowed; }
 
-  #shop, #order { position:fixed; right:16px; top:16px; width:392px; max-height:calc(100% - 32px); overflow:auto; padding:14px 14px 10px; display:none; }
-  #shop h2, #order h2 { margin:0 0 4px; font-size:18px; }
-  #order .note { font-size:12px; color:#6b7c86; margin-bottom:6px; }
+  #shop, #order, #maker { position:fixed; right:16px; top:16px; width:392px; max-height:calc(100% - 32px); overflow:auto; padding:14px 14px 10px; display:none; }
+  #shop h2, #order h2, #maker h2 { margin:0 0 4px; font-size:18px; }
+  #order .note, #maker .note { font-size:12px; color:#6b7c86; margin-bottom:6px; }
   .up { display:flex; align-items:center; gap:10px; padding:9px 4px; border-top:1px solid #e1e8ed; }
   .up .t { flex:1; min-width:0; }
   .up .n { font-weight:800; font-size:14px; }
   .up .d { font-size:12px; color:#6b7c86; }
   .up .lv { font-size:12px; font-weight:800; color:var(--green); }
   .up .btn { padding:7px 12px; font-size:14px; min-width:92px; }
-  #shop .foot, #order .foot { border-top:1px solid #e1e8ed; padding-top:8px; text-align:right; }
-  #shop .foot button, #order .foot button { font-size:12px; padding:5px 10px; }
+  #shop .foot, #order .foot, #maker .foot { border-top:1px solid #e1e8ed; padding-top:8px; text-align:right; }
+  #shop .foot button, #order .foot button, #maker .foot button { font-size:12px; padding:5px 10px; }
 
   /* ---- 握りモード（一人称 + 店内ワイプ） ---- */
   body.crafting #hud, body.shelving #hud { left:auto; right:16px; align-items:flex-end; }
@@ -98,14 +98,16 @@
   #press-i { height:100%; width:0; background:linear-gradient(90deg,#ffb347,#ff7a2a); }
   /* ---- 棚モード（棚にアップ） ---- */
   #shelfui { position:fixed; inset:0; pointer-events:none; display:none; z-index:4; }
-  #shelfui .panel { position:absolute; left:16px; top:50%; transform:translateY(-50%); width:280px; padding:14px; pointer-events:auto; }
-  #shelfui h3 { margin:0 0 2px; font-size:17px; }
-  #shelfui .sub { font-size:12px; color:#6b7c86; margin-bottom:8px; line-height:1.5; }
-  .trow { display:flex; align-items:center; gap:8px; padding:6px 0; border-top:1px solid #e1e8ed; }
-  .tn { width:46px; font-weight:800; font-size:13px; }
-  .tsel { flex:1; border:0; font:inherit; font-weight:800; padding:8px 10px; border-radius:10px; background:#e8f6ee; color:#157a48; cursor:pointer; box-shadow:0 3px 0 #b9d9c6; text-align:left; }
-  .tsel:hover { background:#d8f0e1; }
-  .tc { font-size:12px; font-weight:700; color:#6b7c86; min-width:46px; text-align:right; }
+  #shelfui .panel { position:absolute; left:16px; bottom:16px; width:270px; padding:12px 14px; pointer-events:auto; }
+  #shelfui h3 { margin:0 0 2px; font-size:16px; }
+  #shelfui .sub { font-size:12px; color:#6b7c86; line-height:1.5; }
+  #tier-btns { position:absolute; inset:0; pointer-events:none; }
+  .tierbtn { position:absolute; left:0; top:0; pointer-events:auto; display:flex; flex-direction:column; align-items:flex-start; gap:1px; min-width:132px;
+             border:0; font:inherit; padding:6px 12px; border-radius:12px; background:#fff; color:#157a48; cursor:pointer;
+             box-shadow:0 4px 0 #b9d9c6, 0 6px 14px rgba(30,60,90,.25); text-align:left; }
+  .tierbtn:hover { background:#e8f6ee; }
+  .tierbtn b { font-size:15px; font-weight:900; }
+  .tierbtn span { font-size:12px; font-weight:700; color:#6b7c86; }
   .hold { margin-top:8px; padding-top:8px; border-top:1px solid #e1e8ed; font-size:13px; font-weight:700; line-height:1.6; }
   .alertq { margin-top:8px; padding:6px 10px; border-radius:10px; background:#e5483b; color:#fff; font-size:13px; font-weight:800; }
   #shelf-exit { position:absolute; right:16px; bottom:16px; pointer-events:auto; font-size:14px; padding:9px 16px; }
@@ -150,12 +152,14 @@
 <div id="toast" class="card"></div>
 <div id="shop" class="card"></div>
 <div id="order" class="card"></div>
+<div id="maker" class="card"></div>
 
 <div id="shelfui">
+  <div id="tier-btns"></div>
   <div class="panel card">
     <h3>棚の段</h3>
-    <div class="sub">段ごとに置くおにぎりを決めておくと、持ってきた分がその段に並びます。ボタンで種類を切り替え。</div>
-    <div id="tier-rows"></div>
+    <div class="sub">各段の左のボタンで、その段に置くおにぎりを決められます。決めた段に、持ってきた分が並びます。</div>
+    <div id="shelf-hold"></div>
   </div>
   <button class="btn sub" id="shelf-exit">とじる [E]</button>
 </div>
