@@ -18,3 +18,13 @@ npm run build:js
 if ($LASTEXITCODE -ne 0) { throw 'ゲームのビルドに失敗しました' }
 npx electron-builder --win --publish always
 if ($LASTEXITCODE -ne 0) { throw 'インストーラの作成・アップロードに失敗しました' }
+
+# 版番号が変わっても変わらない「固定名」のダウンロード用コピーも、同じリリースに載せる
+#   https://github.com/kou6630/konbini-hakoniwa/releases/latest/download/KonbiniHakoniwa-Setup.exe
+$version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+$src = "dist-installer\KonbiniHakoniwa-Setup-$version.exe"
+$fixed = "dist-installer\KonbiniHakoniwa-Setup.exe"
+Copy-Item $src $fixed -Force
+gh release upload "v$version" $fixed --clobber -R kou6630/konbini-hakoniwa
+if ($LASTEXITCODE -ne 0) { throw '固定名コピーのアップロードに失敗しました' }
+Write-Host "公開しました: https://github.com/kou6630/konbini-hakoniwa/releases/latest/download/KonbiniHakoniwa-Setup.exe"

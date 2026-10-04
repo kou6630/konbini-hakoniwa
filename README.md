@@ -7,8 +7,8 @@
 
 ## ダウンロード
 
-**[最新版をダウンロード（Releases）](https://github.com/kou6630/konbini-hakoniwa/releases/latest)** から
-`KonbiniHakoniwa-Setup-x.x.x.exe` をダウンロードして実行してください。
+**[インストーラを直接ダウンロード（最新版）](https://github.com/kou6630/konbini-hakoniwa/releases/latest/download/KonbiniHakoniwa-Setup.exe)**
+して実行してください。（[Releases ページ](https://github.com/kou6630/konbini-hakoniwa/releases/latest) からも入手できます）
 
 - インストールすると、スタートメニューとデスクトップに「コンビニはじめちゃいました」ができます。
 - 起動するたびに新しいバージョンを自動で確認し、見つかればダウンロードして更新します（セーブデータは消えません）。
