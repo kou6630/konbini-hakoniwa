@@ -16,7 +16,7 @@ export const LAYOUT = {
   // 入口は手前の壁（売場側）
   door: { x0: -0.75, x1: 1.0, xc: 0.125, z: 4 },
   // 搬入口は手前の壁（バックヤード側）
-  backDoor: { x0: -6.25, x1: -5.0, xc: -5.625, z: 4, use: { x: -5.625, z: 2.75 } },
+  backDoor: { x0: -6.25, x1: -5.0, xc: -5.625, z: 4, use: { x: -5.625, z: 3.05 } },
   gap: { z0: -3.5, z1: -1.5 }, // 仕切り壁の通路
   queue: (i) => ({ x: -0.15, z: -6.2 + 0.8 * Math.min(i, 4) }),
   entryPath: [{ x: 0.125, z: 4.2 }, { x: 0.9, z: 3.0 }],
@@ -30,13 +30,22 @@ export const LAYOUT = {
   // Lv.5 揚げ物台（奥の壁ぎわ）/ ホットスナックケース（増築エリアの右壁ぎわ）
   fryer: { x: -4.0, z: -7.85, rot: 0, len: 1.4, use: { x: -4.0, z: -6.55 } },
   hotCase: { x: 5.35, z: -3.1, rot: -Math.PI / 2, use: { x: 3.75, z: -3.1 } },
+  // Lv.8〜 お菓子棚 / Lv.9 弁当台（バックヤード）・お弁当のケース / Lv.11 スイーツケース（どれも増築エリアの右壁ぎわ）
+  snackRack: { x: 5.35, z: 0.1, rot: -Math.PI / 2, use: { x: 3.75, z: 0.1 } },
+  bentoTable: { x: -3.15, z: 2.2, rot: -Math.PI / 2, len: 1.6, use: { x: -4.55, z: 2.2 } },
+  bentoCase: { x: 5.35, z: -1.5, rot: -Math.PI / 2, use: { x: 3.75, z: -1.5 } },
+  sweetCase: { x: 5.35, z: 1.7, rot: -Math.PI / 2, use: { x: 3.75, z: 1.7 } },
 };
 /** レベルで解禁される設備の当たり判定 */
 export const UNLOCK_COLLIDERS = {
   sand: [{ x0: -7.0, x1: -5.95, z0: -5.9, z1: -4.4 }],
   fry: [{ x0: -4.7, x1: -3.3, z0: -8.5, z1: -7.35 }],
-  sandCase: [{ x0: 5.0, x1: 6.0, z0: -8.5, z1: -7.1 }],
-  hotCase: [{ x0: 4.725, x1: 5.975, z0: -3.6, z1: -2.6 }],
+  bento: [{ x0: -3.65, x1: -2.65, z0: 1.4, z1: 3.0 }],
+  sandcase: [{ x0: 5.0, x1: 6.0, z0: -8.5, z1: -7.1 }],
+  hotcase: [{ x0: 4.725, x1: 5.975, z0: -3.6, z1: -2.6 }],
+  bentocase: [{ x0: 4.725, x1: 5.975, z0: -2.0, z1: -1.0 }],
+  snackrack: [{ x0: 4.725, x1: 5.975, z0: -0.4, z1: 0.6 }],
+  sweetcase: [{ x0: 4.725, x1: 5.975, z0: 1.2, z1: 2.2 }],
 };
 /** Lv.3 の増築で追加される当たり判定 */
 export const EXP_COLLIDERS = [
@@ -188,6 +197,30 @@ export function makeOnigiri(scale = 1, kind = 'shio', bag = false) {
       }
     }
   }
+  if (kind === 'sake' || kind === 'tuna') {
+    let seed = kind === 'sake' ? 11 : 23;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    for (const sg of [1, -1]) {
+      if (kind === 'sake') { // 鮭：ピンクのほぐし身
+        for (let i = 0; i < 9; i++) {
+          const y = r * (0.04 + 0.62 * rnd());
+          const w = 1.1547 * (r - y);
+          const f = new THREE.Mesh(new THREE.BoxGeometry(r * 0.2, r * 0.09, 0.004 * scale + 0.002), M(i % 2 ? '#ff8a75' : '#ffb09a', { roughness: 0.6 }));
+          f.position.set((rnd() - 0.5) * w * 0.8, y, sg * zf);
+          f.rotation.z = rnd() * 3;
+          g.add(f);
+        }
+      } else { // ツナマヨ：ベージュのかたまり
+        for (let i = 0; i < 3; i++) {
+          const y = r * (0.12 + 0.4 * rnd());
+          const d = new THREE.Mesh(new THREE.SphereGeometry(r * 0.17, 10, 8), M(i === 1 ? '#fff4d6' : '#e9d3a3', { roughness: 0.5 }));
+          d.scale.z = 0.3;
+          d.position.set((rnd() - 0.5) * r * 0.35, y, sg * zf);
+          g.add(d);
+        }
+      }
+    }
+  }
   if (bag) {
     // フィルムの袋に入った見た目：半透明の袋＋下のシール（種類ごとに色違い）＋てっぺんの折り返し
     const film = new THREE.Mesh(
@@ -197,7 +230,7 @@ export function makeOnigiri(scale = 1, kind = 'shio', bag = false) {
     film.rotation.x = -Math.PI / 2;
     film.userData.noShadow = true;
     g.add(film);
-    const tone = { shio: '#4aa3ff', ume: '#e04a5a', okaka: '#e8a04a' }[kind] || '#4aa3ff';
+    const tone = { shio: '#4aa3ff', ume: '#e04a5a', okaka: '#e8a04a', sake: '#ff7f6e', tuna: '#7fbf5a' }[kind] || '#4aa3ff';
     const seal = new THREE.Mesh(new THREE.BoxGeometry(r * 1.55, r * 0.2, th * 2.0 + 0.012 * scale), M(tone, { roughness: 0.4 }));
     seal.position.y = -r * 0.5;
     g.add(seal);
@@ -295,7 +328,7 @@ export function makePerson(o = {}) {
 }
 
 /* ---------- 棚（おにぎり冷蔵ケース） ---------- */
-export const KIND_IDS = ['shio', 'ume', 'okaka'];
+export const KIND_IDS = ['shio', 'ume', 'okaka', 'sake', 'tuna'];
 export function buildShelf() {
   const g = new THREE.Group();
   const W = 2.0, D = 1.0;
@@ -315,7 +348,7 @@ export function buildShelf() {
   const cache = new Map();
   const popping = new Set();
   const getObj = (t, i, k) => {
-    const key = t * 100 + i * 4 + KIND_IDS.indexOf(k);
+    const key = t * 200 + i * 8 + KIND_IDS.indexOf(k);
     let o = cache.get(key);
     if (!o) {
       o = makeOnigiri(0.75, k, true);
@@ -341,7 +374,7 @@ export function buildShelf() {
               const o = getObj(t, i, k);
               if (!o.visible) { o.visible = true; o.userData.pop = 0; o.scale.setScalar(0.3); popping.add(o); }
             } else {
-              const o = cache.get(t * 100 + i * 4 + KIND_IDS.indexOf(k));
+              const o = cache.get(t * 200 + i * 8 + KIND_IDS.indexOf(k));
               if (o) o.visible = false;
             }
           });
@@ -434,9 +467,9 @@ export function buildStation() {
 
   // 具材のお皿（奥の列）
   const bowls = {};
-  const mkBowl = (x, kind, rimColor, fill) => {
+  const mkBowl = (x, kind, rimColor, fill, y = 0, z = -0.33) => {
     const b = new THREE.Group();
-    b.position.set(x, 0, -0.33);
+    b.position.set(x, y, z);
     g.add(b);
     cy(b, 0.17, 0.12, 0.12, rimColor, [0, top, 0], 24);
     fill(b);
@@ -455,10 +488,25 @@ export function buildStation() {
     for (let i = 0; i < 10; i++) bx(b, [0.04, 0.012, 0.025], i % 2 ? '#a7653a' : '#e0b182', [Math.cos(i * 1.9) * 0.09, top + 0.155, Math.sin(i * 1.9) * 0.09], { r: 0.003 });
   });
 
+  // 上の具材棚（Lv.8〜 鮭、Lv.9〜 ツナマヨ）
+  const rack = new THREE.Group();
+  g.add(rack);
+  bx(rack, [1.0, 0.03, 0.3], '#d6b98a', [0.45, top + 0.27, -0.42], { r: 0.008 });
+  bx(rack, [0.04, 0.27, 0.04], '#a8793f', [-0.02, top, -0.5], { r: 0.005 });
+  bx(rack, [0.04, 0.27, 0.04], '#a8793f', [0.92, top, -0.5], { r: 0.005 });
+  mkBowl(0.2, 'sake', '#d9674f', (b) => {
+    sp(b, 0.145, '#ff9c85', [0, top + 0.1, 0], { roughness: 0.8 }, 0.5);
+    for (let i = 0; i < 8; i++) bx(b, [0.05, 0.012, 0.025], i % 2 ? '#ffb7a3' : '#f27a63', [Math.cos(i * 2.1) * 0.09, top + 0.15, Math.sin(i * 2.1) * 0.09], { r: 0.003 });
+  }, 0.3, -0.42);
+  mkBowl(0.65, 'tuna', '#6aa84f', (b) => {
+    sp(b, 0.145, '#ecd9ad', [0, top + 0.1, 0], { roughness: 0.6 }, 0.5);
+    for (let i = 0; i < 5; i++) sp(b, 0.04, '#fff4d6', [Math.cos(i * 1.3) * 0.08, top + 0.15, Math.sin(i * 1.3) * 0.08], { roughness: 0.4 });
+  }, 0.3, -0.42);
+
   return {
     group: g,
     tub, bowls,
-    targets: [tub, bowls.salt, bowls.ume, bowls.okaka],
+    targets: [tub, bowls.salt, bowls.ume, bowls.okaka, bowls.sake, bowls.tuna],
     setRice(n) {
       mound.visible = n > 0;
       mound.scale.set(1, 0.25 + Math.min(n, 16) * 0.025, 1);
@@ -466,6 +514,9 @@ export function buildStation() {
     setBowls(level) {
       bowls.ume.visible = level >= 2;
       bowls.okaka.visible = level >= 2;
+      bowls.sake.visible = level >= 8;
+      bowls.tuna.visible = level >= 9;
+      rack.visible = level >= 8;
     },
   };
 }
@@ -690,23 +741,89 @@ export function makeFried(kind = 'karaage', scale = 1) {
   return g;
 }
 
-/* ---------- 売り場ケース（サンドイッチ冷蔵 / ホットスナック保温） 幅1.0m × 奥行1.25m ---------- */
+/* ---------- お弁当・お菓子・スイーツ ---------- */
+export function makeBento(kind = 'bento_kara', scale = 1) {
+  const g = new THREE.Group();
+  const s1 = scale;
+  bx(g, [0.34 * s1, 0.07 * s1, 0.24 * s1], '#2b2b2b', [0, 0, 0], { r: 0.012 * s1 });
+  // ごはん（白）とおかず
+  bx(g, [0.17 * s1, 0.05 * s1, 0.2 * s1], '#fbfaf3', [-0.065 * s1, 0.07 * s1, 0], { r: 0.01 * s1 });
+  if (kind === 'bento_kara') {
+    [[0.07, 0.0], [0.1, 0.07], [0.1, -0.06]].forEach(([x, z], i) => {
+      const m = sp(g, 0.04 * s1, i % 2 ? '#c27a2b' : '#b8691f', [x * s1, 0.105 * s1, z * s1], { roughness: 0.85 });
+      m.scale.set(1.05, 0.9, 1);
+    });
+    bx(g, [0.05 * s1, 0.025 * s1, 0.18 * s1], '#ffd84a', [0.02 * s1, 0.095 * s1, 0], { r: 0.005 });
+  } else {
+    bx(g, [0.17 * s1, 0.012 * s1, 0.2 * s1], '#1f3a2a', [-0.065 * s1, 0.122 * s1, 0], { r: 0.003 }); // のり
+    bx(g, [0.08 * s1, 0.03 * s1, 0.07 * s1], '#e07a2e', [0.1 * s1, 0.1 * s1, -0.05 * s1], { r: 0.008 }); // 白身フライ
+    bx(g, [0.05 * s1, 0.02 * s1, 0.08 * s1], '#9bc85a', [0.1 * s1, 0.09 * s1, 0.06 * s1], { r: 0.006 });
+  }
+  const lid = new THREE.Mesh(new THREE.BoxGeometry(0.35 * s1, 0.012 * s1, 0.25 * s1), new THREE.MeshStandardMaterial({ color: '#ffffff', transparent: true, opacity: 0.3, roughness: 0.1, depthWrite: false }));
+  lid.position.y = 0.138 * s1;
+  lid.userData.noShadow = true;
+  g.add(lid);
+  bx(g, [0.12 * s1, 0.014 * s1, 0.2 * s1], kind === 'bento_kara' ? '#e8a317' : '#4aa36a', [0.1 * s1, 0.146 * s1, 0], { r: 0.003 }); // 帯シール
+  return g;
+}
+export function makeSnack(kind = 'chips', scale = 1) {
+  const g = new THREE.Group();
+  const s1 = scale;
+  if (kind === 'chips') {
+    // 立てて置く袋
+    const bag = bx(g, [0.2 * s1, 0.27 * s1, 0.06 * s1], '#f2c14e', [0, 0, 0], { r: 0.015 * s1 });
+    bag.rotation.x = -0.12;
+    bx(g, [0.2 * s1, 0.025 * s1, 0.07 * s1], '#d6453d', [0, 0.22 * s1, 0.002], { r: 0.004 });
+    const w = sp(g, 0.06 * s1, '#e8e0cf', [0, 0.13 * s1, 0.04 * s1], { roughness: 0.6 }, 0.8);
+    w.scale.z = 0.25;
+  } else {
+    // 板チョコの箱
+    bx(g, [0.2 * s1, 0.04 * s1, 0.13 * s1], '#6b3f25', [0, 0, 0], { r: 0.008 * s1 });
+    bx(g, [0.14 * s1, 0.012 * s1, 0.07 * s1], '#e8c24a', [0, 0.04 * s1, 0], { r: 0.003 });
+    bx(g, [0.2 * s1, 0.012 * s1, 0.02 * s1], '#d6453d', [0, 0.03 * s1, 0.06 * s1], { r: 0.002 });
+  }
+  return g;
+}
+export function makeSweet(kind = 'pudding', scale = 1) {
+  const g = new THREE.Group();
+  const s1 = scale;
+  if (kind === 'pudding') {
+    cy(g, 0.075 * s1, 0.055 * s1, 0.09 * s1, '#ffd45a', [0, 0, 0], 20, { roughness: 0.5 }); // 本体
+    cy(g, 0.078 * s1, 0.078 * s1, 0.012 * s1, '#7a4a1e', [0, 0.09 * s1, 0], 20, { roughness: 0.4 }); // カラメル
+    sp(g, 0.025 * s1, '#ffffff', [0, 0.115 * s1, 0], { roughness: 0.5 });
+    sp(g, 0.018 * s1, '#d6453d', [0, 0.14 * s1, 0], { roughness: 0.4 });
+  } else {
+    const puff = sp(g, 0.075 * s1, '#d99a4a', [0, 0.07 * s1, 0], { roughness: 0.85 }, 0.8);
+    puff.scale.x = 1.15;
+    cy(g, 0.078 * s1, 0.078 * s1, 0.012 * s1, '#fff1d0', [0, 0.065 * s1, 0], 20, { roughness: 0.5 }); // クリーム
+    sp(g, 0.04 * s1, '#ffffff', [0, 0.14 * s1, 0], { roughness: 0.6 }, 0.5);
+  }
+  return g;
+}
+
+/* ---------- 売り場ケース（サンドイッチ / ホットスナック / お弁当 / お菓子 / スイーツ） 幅1.0m × 奥行1.25m ---------- */
+const CASE_CFG = {
+  sand: { tone: '#f2a33a', text: 'サンドイッチ', wall: '#f5ecdd', glow: '#fff2c8', emi: '#ffe08a', glass: '#fff4d6', kinds: ['tamago', 'ham'], make: (k) => makeSandwich(k, 0.95) },
+  hot: { tone: '#d6453d', text: 'ホットスナック', wall: '#f4e4dc', glow: '#ffd9a0', emi: '#ff9a3c', glass: '#ffe9cf', kinds: ['karaage', 'korokke'], make: (k) => makeFried(k, 0.9) },
+  bento: { tone: '#8a5a35', text: 'お弁当', wall: '#f3eadf', glow: '#fff2c8', emi: '#ffe08a', glass: '#fff4d6', kinds: ['bento_kara', 'bento_nori'], make: (k) => makeBento(k, 1.0) },
+  snack: { tone: '#e8a317', text: 'お菓子', wall: '#f7efd8', glow: '#fff7d0', emi: '#ffe9a0', glass: '#fff9e0', kinds: ['chips', 'choco'], make: (k) => makeSnack(k, 1.0) },
+  sweet: { tone: '#e8688a', text: 'スイーツ', wall: '#fbe9ef', glow: '#ffe3ee', emi: '#ffc2d6', glass: '#fff0f5', kinds: ['pudding', 'cream'], make: (k) => makeSweet(k, 1.0) },
+};
 export function buildDisplayCase(type) {
-  const hot = type === 'hot';
+  const cfg = CASE_CFG[type];
   const g = new THREE.Group();
   const W = 1.0, D = 1.25, hw = W / 2, hd = D / 2;
-  const tone = hot ? '#d6453d' : '#f2a33a';
   bx(g, [W, 0.2, D], '#cfd8dc', [0, 0, 0]);
-  bx(g, [W, 1.75, 0.07], hot ? '#f4e4dc' : '#f5ecdd', [0, 0.2, -hd + 0.035]);
-  bx(g, [0.07, 1.75, D], hot ? '#f4e4dc' : '#f5ecdd', [-hw + 0.035, 0.2, 0]);
-  bx(g, [0.07, 1.75, D], hot ? '#f4e4dc' : '#f5ecdd', [hw - 0.035, 0.2, 0]);
+  bx(g, [W, 1.75, 0.07], cfg.wall, [0, 0.2, -hd + 0.035]);
+  bx(g, [0.07, 1.75, D], cfg.wall, [-hw + 0.035, 0.2, 0]);
+  bx(g, [0.07, 1.75, D], cfg.wall, [hw - 0.035, 0.2, 0]);
   const levels = [0.55, 0.95, 1.35];
   levels.forEach((y) => bx(g, [W - 0.14, 0.04, D - 0.1], '#ffffff', [0, y, 0], { r: 0.01 }));
-  bx(g, [W + 0.12, 0.2, D + 0.12], tone, [0, 1.78, 0]);
-  const sign = plane(g, W - 0.1, 0.18, signTex(hot ? 'ホットスナック' : 'サンドイッチ', tone, '#ffffff', 512, 64, 'bold 40px "Yu Gothic UI","Meiryo",sans-serif'), [0, 1.88, hd + 0.065]);
+  bx(g, [W + 0.12, 0.2, D + 0.12], cfg.tone, [0, 1.78, 0]);
+  const sign = plane(g, W - 0.1, 0.18, signTex(cfg.text, cfg.tone, '#ffffff', 512, 64, 'bold 40px "Yu Gothic UI","Meiryo",sans-serif'), [0, 1.88, hd + 0.065]);
   sign.castShadow = false;
-  bx(g, [W - 0.2, 0.03, D - 0.2], hot ? '#ffd9a0' : '#fff2c8', [0, 1.7, 0.0], { r: 0.005, mat: { emissive: hot ? '#ff9a3c' : '#ffe08a' } });
-  const glass = new THREE.Mesh(new THREE.BoxGeometry(W - 0.1, 1.62, 0.03), new THREE.MeshStandardMaterial({ color: hot ? '#ffe9cf' : '#fff4d6', transparent: true, opacity: 0.16, roughness: 0.05, depthWrite: false }));
+  bx(g, [W - 0.2, 0.03, D - 0.2], cfg.glow, [0, 1.7, 0.0], { r: 0.005, mat: { emissive: cfg.emi } });
+  const glass = new THREE.Mesh(new THREE.BoxGeometry(W - 0.1, 1.62, 0.03), new THREE.MeshStandardMaterial({ color: cfg.glass, transparent: true, opacity: 0.16, roughness: 0.05, depthWrite: false }));
   glass.position.set(0, 1.01, hd + 0.01);
   glass.userData.noShadow = true;
   g.add(glass);
@@ -718,10 +835,10 @@ export function buildDisplayCase(type) {
     return new THREE.Vector3(k % 2 ? 0.2 : -0.2, levels[lv] + 0.025, k < 2 ? 0.28 : -0.28);
   };
   const getObj = (i, kind) => {
-    const key = i * 10 + (hot ? ['karaage', 'korokke'].indexOf(kind) : ['tamago', 'ham'].indexOf(kind));
+    const key = i * 10 + cfg.kinds.indexOf(kind);
     let o = cache.get(key);
     if (!o) {
-      o = hot ? makeFried(kind, 0.9) : makeSandwich(kind, 0.95);
+      o = cfg.make(kind);
       o.position.copy(slotPos(i));
       o.traverse((m) => { if (m.isMesh && !m.userData.noShadow) { m.castShadow = true; m.receiveShadow = true; } });
       g.add(o);
@@ -841,6 +958,41 @@ export function buildFryer(len = 1.4) {
         s2.material.opacity = 0.45 * (1 - k);
       });
     },
+    setOutput(kinds) {
+      cache.forEach((o) => { o.visible = false; });
+      kinds.slice(0, 4).forEach((k, i) => { get(i, k).visible = true; });
+    },
+  };
+}
+
+/* ---------- 弁当台（バックヤード）長さ len × 奥行 1.0 ---------- */
+export function buildBentoTable(len = 1.6) {
+  const g = new THREE.Group();
+  bx(g, [len, 0.9, 1.0], '#cfd6db', [0, 0, 0], { r: 0.05 });
+  bx(g, [len + 0.1, 0.07, 1.1], '#e8ecef', [0, 0.9, 0], { r: 0.03 });
+  const top = 0.97;
+  // ごはんの桶・おかずのバット・空の弁当箱
+  cy(g, 0.26, 0.21, 0.22, '#8a5a35', [-0.5, top, 0.12], 22);
+  sp(g, 0.24, '#fffdf4', [-0.5, top + 0.22, 0.12], { roughness: 0.95 }, 0.4);
+  bx(g, [0.36, 0.05, 0.26], '#d9dde0', [-0.05, top, -0.2], { r: 0.01 });
+  [[-0.14, -0.2], [-0.03, -0.17], [0.07, -0.22]].forEach(([x, z], i) => sp(g, 0.045, i % 2 ? '#c27a2b' : '#b8691f', [x, top + 0.08, z], { roughness: 0.85 }));
+  for (let i = 0; i < 3; i++) bx(g, [0.3, 0.03, 0.22], '#2b2b2b', [0.1, top + i * 0.032, 0.2], { r: 0.008 });
+  // 出来上がりを置くトレー
+  bx(g, [0.5, 0.03, 0.4], '#f2d49a', [0.55, top, -0.2], { r: 0.01 });
+  const cache = new Map();
+  const get = (i, kind) => {
+    const key = i * 10 + (kind === 'bento_nori' ? 1 : 0);
+    let o = cache.get(key);
+    if (!o) {
+      o = makeBento(kind, 0.7);
+      o.position.set(0.42 + (i % 2) * 0.24, top + 0.03, -0.3 + Math.floor(i / 2) * 0.22);
+      g.add(o);
+      cache.set(key, o);
+    }
+    return o;
+  };
+  return {
+    group: g,
     setOutput(kinds) {
       cache.forEach((o) => { o.visible = false; });
       kinds.slice(0, 4).forEach((k, i) => { get(i, k).visible = true; });

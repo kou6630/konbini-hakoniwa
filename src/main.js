@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import {
   LAYOUT, COLLIDERS, SHELF_COLLIDERS, EXP_COLLIDERS, UNLOCK_COLLIDERS, KIND_IDS, bx, cy, sp,
-  makeOnigiri, makeSandwich, makeFried, makePerson, buildShelf, buildCooker, buildStation, buildTrayStand, buildRegister, buildDoor, buildBackDoor, buildFridge, buildDisplayCase, buildSandTable, buildFryer, buildExpansion, buildWorld,
+  makeOnigiri, makeSandwich, makeFried, makeBento, makePerson, buildShelf, buildCooker, buildStation, buildTrayStand, buildRegister, buildDoor, buildBackDoor, buildFridge, buildDisplayCase, buildSandTable, buildFryer, buildBentoTable, buildExpansion, buildWorld,
 } from './models.js';
 
 /* =====================================================================
@@ -40,29 +40,41 @@ const KINDS = {
   shio: { name: '塩むすび', short: '塩', price: 150, ing: 'salt', lv: 1, weight: 0.5 },
   ume: { name: '梅むすび', short: '梅', price: 200, ing: 'ume', lv: 2, weight: 0.25 },
   okaka: { name: 'おかかむすび', short: 'か', price: 200, ing: 'okaka', lv: 2, weight: 0.25 },
+  sake: { name: '鮭むすび', short: '鮭', price: 220, ing: 'sake', lv: 8, weight: 0.2 },
+  tuna: { name: 'ツナマヨむすび', short: 'ツ', price: 220, ing: 'tuna', lv: 9, weight: 0.2 },
 };
-// サンドイッチ・揚げ物・飲み物（レベルで解禁）
+// サンドイッチ・揚げ物・弁当（作る台で作る）／飲み物・お菓子・スイーツ（食材として注文して並べる）
 const FOODS = {
   tamago: { name: 'たまごサンド', label: 'たまご', price: 230, lv: 4, cat: 'sand', weight: 0.6 },
   ham: { name: 'ハムサンド', label: 'ハム', price: 250, lv: 6, cat: 'sand', weight: 0.4 },
   karaage: { name: 'から揚げ', label: 'から揚げ', price: 180, lv: 5, cat: 'fried', weight: 0.6 },
   korokke: { name: 'コロッケ', label: 'コロッケ', price: 140, lv: 7, cat: 'fried', weight: 0.4 },
+  bento_kara: { name: '唐揚げ弁当', label: '唐揚げ弁当', price: 480, lv: 9, cat: 'bento', weight: 0.6 },
+  bento_nori: { name: 'のり弁当', label: 'のり弁当', price: 420, lv: 10, cat: 'bento', weight: 0.4 },
 };
 const DRINKS = {
   water: { name: '水', label: '水', price: 120, lv: 3, cat: 'drink', weight: 0.5 },
   tea: { name: 'お茶', label: 'お茶', price: 140, lv: 5, cat: 'drink', weight: 0.3 },
   coffee: { name: 'コーヒー', label: 'コーヒー', price: 160, lv: 7, cat: 'drink', weight: 0.2 },
 };
-const FOOD_IDS = ['tamago', 'ham', 'karaage', 'korokke'];
-const DRINK_IDS = ['water', 'tea', 'coffee'];
+const GOODS = {
+  chips: { name: 'ポテトチップス', label: 'ポテチ', price: 160, lv: 8, cat: 'snack', weight: 0.6 },
+  choco: { name: 'チョコレート', label: 'チョコ', price: 130, lv: 10, cat: 'snack', weight: 0.4 },
+  pudding: { name: 'プリン', label: 'プリン', price: 180, lv: 11, cat: 'sweet', weight: 0.6 },
+  cream: { name: 'シュークリーム', label: 'シュー', price: 200, lv: 12, cat: 'sweet', weight: 0.4 },
+};
+const FOOD_IDS = Object.keys(FOODS);
+const DRINK_IDS = Object.keys(DRINKS);
+const ONIGIRI_LABEL = { shio: '塩', ume: '梅', okaka: 'おかか', sake: '鮭', tuna: 'ツナマヨ' };
 const ITEM = {
-  ...Object.fromEntries(KIND_IDS.map((k) => [k, { ...KINDS[k], label: { shio: '塩', ume: '梅', okaka: 'おかか' }[k], cat: 'onigiri' }])),
+  ...Object.fromEntries(KIND_IDS.map((k) => [k, { ...KINDS[k], label: ONIGIRI_LABEL[k], cat: 'onigiri' }])),
   ...FOODS,
   ...DRINKS,
+  ...GOODS,
 };
 const itemUnlocked = (id) => S.level >= ITEM[id].lv;
-const CAT_ICON = { onigiri: '🍙', drink: '💧', sand: '🥪', fried: '🍗' };
-// 食材（裏口から注文）
+const CAT_ICON = { onigiri: '🍙', drink: '💧', sand: '🥪', fried: '🍗', bento: '🍱', snack: '🍿', sweet: '🍮' };
+// 食材・仕入れ品（裏口から注文）
 const ING = {
   rice: { name: '米', icon: '🍚', pack: 10, cost: 100, lv: 1 },
   salt: { name: '塩', icon: '🧂', pack: 10, cost: 50, lv: 1 },
@@ -76,18 +88,26 @@ const ING = {
   hamslice: { name: 'ハム', icon: '🥓', pack: 10, cost: 180, lv: 6 },
   potato: { name: 'じゃがいも', icon: '🥔', pack: 10, cost: 120, lv: 7 },
   coffee: { name: 'コーヒー', icon: '☕', pack: 10, cost: 100, lv: 7 },
+  sake: { name: '鮭', icon: '🐟', pack: 10, cost: 300, lv: 8 },
+  chips: { name: 'ポテトチップス', icon: '🍿', pack: 10, cost: 650, lv: 8 },
+  tuna: { name: 'ツナマヨ', icon: '🥫', pack: 10, cost: 260, lv: 9 },
+  choco: { name: 'チョコレート', icon: '🍫', pack: 10, cost: 600, lv: 10 },
+  pudding: { name: 'プリン', icon: '🍮', pack: 10, cost: 800, lv: 11 },
+  cream: { name: 'シュークリーム', icon: '🥐', pack: 10, cost: 900, lv: 12 },
 };
-const ING_IDS = ['rice', 'salt', 'ume', 'okaka', 'water', 'bread', 'egg', 'tea', 'chicken', 'hamslice', 'potato', 'coffee'];
+const ING_IDS = ['rice', 'salt', 'ume', 'okaka', 'water', 'bread', 'egg', 'tea', 'chicken', 'hamslice', 'potato', 'coffee', 'sake', 'chips', 'tuna', 'choco', 'pudding', 'cream'];
 // 作る台のレシピ（1回に batch 個。材料は 1個あたり ing ぶん）
 const RECIPES = {
   tamago: { maker: 'sand', ing: { bread: 1, egg: 1 }, batch: 4 },
   ham: { maker: 'sand', ing: { bread: 1, hamslice: 1 }, batch: 4 },
   karaage: { maker: 'fry', ing: { chicken: 1 }, batch: 4 },
   korokke: { maker: 'fry', ing: { potato: 1 }, batch: 4 },
+  bento_kara: { maker: 'bento', ing: { rice: 1, chicken: 1 }, batch: 4 },
+  bento_nori: { maker: 'bento', ing: { rice: 1, egg: 1 }, batch: 4 },
 };
 const MAKER_TIME = 8;
-const emptyCounts = () => ({ shio: 0, ume: 0, okaka: 0 });
-const sumC = (c) => c.shio + c.ume + c.okaka;
+const emptyCounts = () => Object.fromEntries(KIND_IDS.map((k) => [k, 0]));
+const sumC = (c) => KIND_IDS.reduce((a, k) => a + (c[k] || 0), 0);
 const listOf = (c) => {
   const a = [];
   KIND_IDS.forEach((k) => { for (let i = 0; i < c[k]; i++) a.push(k); });
@@ -97,7 +117,7 @@ const listOf = (c) => {
 const defaultState = () => ({
   money: 500, exp: 0, level: 1, day: 1, time: DAY_START, opened: false, rep: 3,
   up: { shelfCap: 0, cooker: 0, craft: 0, carry: 0, poster: 0 },
-  inv: { rice: 8, salt: 8, ume: 0, okaka: 0, water: 0, bread: 0, egg: 0, tea: 0, chicken: 0, hamslice: 0, potato: 0, coffee: 0 },
+  inv: { rice: 8, salt: 8, ume: 0, okaka: 0, water: 0, bread: 0, egg: 0, tea: 0, chicken: 0, hamslice: 0, potato: 0, coffee: 0, sake: 0, tuna: 0, chips: 0, choco: 0, pudding: 0, cream: 0 },
   pending: [],
   staff: {}, // 雇っているアルバイト { role: true }
   tiers: ['shio', 'shio', 'shio', 'shio'], // 棚の各段（上から）に置くおにぎり
@@ -363,22 +383,40 @@ const fridge = new Display('fridge', DRINK_IDS, 12, buildFridge(), LAYOUT.fridge
 const sandCase = new Display('sand', ['tamago', 'ham'], 12, buildDisplayCase('sand'), LAYOUT.sandCase);
 const hotCase = new Display('hot', ['karaage', 'korokke'], 12, buildDisplayCase('hot'), LAYOUT.hotCase);
 
-// 作る台：サンドイッチ台（Lv.4）、揚げ物台（Lv.5）
+const bentoCase = new Display('bento', ['bento_kara', 'bento_nori'], 12, buildDisplayCase('bento'), LAYOUT.bentoCase);
+const snackRack = new Display('snack', ['chips', 'choco'], 12, buildDisplayCase('snack'), LAYOUT.snackRack);
+const sweetCase = new Display('sweet', ['pudding', 'cream'], 12, buildDisplayCase('sweet'), LAYOUT.sweetCase);
+/** 売り場ケースの一覧（mode: 'inv'=在庫から入れる / 'carry'=持ってきたものを並べる、face=お客さんが向く向き） */
+const DISPLAYS = [
+  { d: fridge, stop: 'fridge', id: 'fridge', cat: 'drink', lv: 3, mode: 'inv', label: '飲み物', color: '#2f9be0', layout: LAYOUT.fridge, p: 0.35, face: Math.PI, tagY: 2.5 },
+  { d: sandCase, stop: 'sand', id: 'sandcase', cat: 'sand', lv: 4, mode: 'carry', label: 'サンドイッチ', color: '#f2a33a', layout: LAYOUT.sandCase, p: 0.3, face: Math.PI, tagY: 3.1 },
+  { d: hotCase, stop: 'hot', id: 'hotcase', cat: 'fried', lv: 5, mode: 'carry', label: 'ホットスナック', color: '#d6453d', layout: LAYOUT.hotCase, p: 0.3, face: Math.PI / 2, tagY: 2.5 },
+  { d: snackRack, stop: 'snack', id: 'snackrack', cat: 'snack', lv: 8, mode: 'inv', label: 'お菓子', color: '#e8a317', layout: LAYOUT.snackRack, p: 0.25, face: Math.PI / 2, tagY: 2.5 },
+  { d: bentoCase, stop: 'bento', id: 'bentocase', cat: 'bento', lv: 9, mode: 'carry', label: 'お弁当', color: '#8a5a35', layout: LAYOUT.bentoCase, p: 0.25, face: Math.PI / 2, tagY: 2.5 },
+  { d: sweetCase, stop: 'sweet', id: 'sweetcase', cat: 'sweet', lv: 11, mode: 'inv', label: 'スイーツ', color: '#e8688a', layout: LAYOUT.sweetCase, p: 0.25, face: Math.PI / 2, tagY: 2.5 },
+];
+const DISP_BY_STOP = Object.fromEntries(DISPLAYS.map((x) => [x.stop, x]));
+const dispShown = (def) => expanded && S.level >= def.lv;
+
+// 作る台：サンドイッチ台（Lv.4）、揚げ物台（Lv.5）、弁当台（Lv.9）
 const sandTableModel = buildSandTable(LAYOUT.sandTable.len);
 sandTableModel.group.position.set(LAYOUT.sandTable.x, 0, LAYOUT.sandTable.z);
 sandTableModel.group.rotation.y = LAYOUT.sandTable.rot;
-sandTableModel.group.visible = false;
-scene.add(sandTableModel.group);
-shadowize(sandTableModel.group);
 const fryerModel = buildFryer(LAYOUT.fryer.len);
 fryerModel.group.position.set(LAYOUT.fryer.x, 0, LAYOUT.fryer.z);
 fryerModel.group.rotation.y = LAYOUT.fryer.rot;
-fryerModel.group.visible = false;
-scene.add(fryerModel.group);
-shadowize(fryerModel.group);
+const bentoTableModel = buildBentoTable(LAYOUT.bentoTable.len);
+bentoTableModel.group.position.set(LAYOUT.bentoTable.x, 0, LAYOUT.bentoTable.z);
+bentoTableModel.group.rotation.y = LAYOUT.bentoTable.rot;
+[sandTableModel, fryerModel, bentoTableModel].forEach((mdl) => {
+  mdl.group.visible = false;
+  scene.add(mdl.group);
+  shadowize(mdl.group);
+});
 const makers = {
-  sand: { id: 'sand', name: 'サンドイッチ台', icon: '🥪', lv: 4, model: sandTableModel, state: 'idle', recipe: null, t: 0, out: [] },
-  fry: { id: 'fry', name: '揚げ物台', icon: '🍗', lv: 5, model: fryerModel, state: 'idle', recipe: null, t: 0, out: [] },
+  sand: { id: 'sand', name: 'サンドイッチ台', icon: '🥪', lv: 4, color: '#f2a33a', model: sandTableModel, use: LAYOUT.sandTable.use, display: sandCase, state: 'idle', recipe: null, t: 0, out: [] },
+  fry: { id: 'fry', name: '揚げ物台', icon: '🍗', lv: 5, color: '#d6453d', model: fryerModel, use: LAYOUT.fryer.use, display: hotCase, state: 'idle', recipe: null, t: 0, out: [] },
+  bento: { id: 'bento', name: '弁当台', icon: '🍱', lv: 9, color: '#8a5a35', model: bentoTableModel, use: LAYOUT.bentoTable.use, display: bentoCase, state: 'idle', recipe: null, t: 0, out: [] },
 };
 
 // 店員（雇用時）
@@ -400,7 +438,7 @@ const player = {
 };
 playerPerson.group.position.copy(player.pos);
 
-const emptyFood = () => ({ tamago: 0, ham: 0, karaage: 0, korokke: 0 });
+const emptyFood = () => Object.fromEntries(FOOD_IDS.map((k) => [k, 0]));
 const carry = { rice: 0, oni: emptyCounts(), food: emptyFood() };
 const foodCount = (c) => FOOD_IDS.reduce((a, k) => a + c.food[k], 0);
 const carryKind = () => (carry.rice > 0 ? 'rice' : sumC(carry.oni) > 0 ? 'onigiri' : foodCount(carry) > 0 ? 'food' : null);
@@ -434,7 +472,7 @@ function fillHold(hold, kind, data) {
     });
   } else if (kind === 'food') {
     FOOD_IDS.flatMap((k) => Array(data[k]).fill(k)).slice(0, 4).forEach((k, i) => {
-      const o = ITEM[k].cat === 'sand' ? makeSandwich(k, 0.8) : makeFried(k, 0.7);
+      const o = ITEM[k].cat === 'sand' ? makeSandwich(k, 0.8) : ITEM[k].cat === 'bento' ? makeBento(k, 0.7) : makeFried(k, 0.7);
       o.position.set((i % 2 - 0.5) * 0.3, (i >> 1) * 0.14 - 0.3, 0);
       hold.add(o);
     });
@@ -613,10 +651,8 @@ const trayTag = new Tag().at(LAYOUT.tray.x, 2.2, LAYOUT.tray.z);
 const regTag = new Tag().at(LAYOUT.register.x, 2.1, LAYOUT.register.z - 0.2);
 const backDoorTag = new Tag().at(LAYOUT.backDoor.xc, 2.6, 3.5);
 shelves.forEach((sh) => { sh.tag = new Tag().at(sh.pos.x, 2.5, sh.pos.z); });
-const fridgeTag = new Tag().at(LAYOUT.fridge.x, 2.5, LAYOUT.fridge.z);
-const sandCaseTag = new Tag().at(LAYOUT.sandCase.x, 3.1, LAYOUT.sandCase.z);
-const hotCaseTag = new Tag().at(LAYOUT.hotCase.x, 2.5, LAYOUT.hotCase.z);
-const makerTags = { sand: new Tag().at(LAYOUT.sandTable.x, 2.2, LAYOUT.sandTable.z), fry: new Tag().at(LAYOUT.fryer.x, 2.5, LAYOUT.fryer.z) };
+DISPLAYS.forEach((def) => { def.tag = new Tag().at(def.layout.x, def.tagY, def.layout.z); });
+const makerTags = { sand: new Tag().at(LAYOUT.sandTable.x, 2.2, LAYOUT.sandTable.z), fry: new Tag().at(LAYOUT.fryer.x, 2.5, LAYOUT.fryer.z), bento: new Tag().at(LAYOUT.bentoTable.x, 2.2, LAYOUT.bentoTable.z) };
 // 握りモードで見えるラベル
 const SX = LAYOUT.station.x, SZ = LAYOUT.station.z;
 // 握り台の向きに合わせた座標変換（lx=台の長さ方向, lz=手前=お客さん側）
@@ -628,6 +664,8 @@ const fpsTags = {
   salt: new Tag('fps').at(...sl(0.0, 1.3, -0.33).toArray()),
   ume: new Tag('fps').at(...sl(0.38, 1.3, -0.33).toArray()),
   okaka: new Tag('fps').at(...sl(0.76, 1.3, -0.33).toArray()),
+  sake: new Tag('fps').at(...sl(0.2, 1.72, -0.42).toArray()),
+  tuna: new Tag('fps').at(...sl(0.65, 1.72, -0.42).toArray()),
   tray: new Tag('fps').at(...sl(1.55, 1.4, 0).toArray()),
 };
 
@@ -665,6 +703,11 @@ function onLevelUp() {
     5: 'Lv.5！ から揚げ・お茶が登場。揚げ物台とホットスナックケースができた。鶏肉とお茶を注文しよう',
     6: 'Lv.6！ ハムサンドが作れるように。ハムを注文しよう',
     7: 'Lv.7！ コロッケとコーヒーが登場。じゃがいもとコーヒーを注文しよう',
+    8: 'Lv.8！ 鮭むすびとお菓子が登場。握り台の上に鮭の棚、売り場にお菓子棚ができた。鮭とポテチを注文しよう',
+    9: 'Lv.9！ ツナマヨむすびとお弁当が登場。バックヤードに弁当台、売り場にお弁当のケースができた。ツナマヨを注文しよう',
+    10: 'Lv.10！ のり弁当とチョコレートが登場。チョコを注文しよう',
+    11: 'Lv.11！ スイーツが登場。売り場にスイーツケースができた。プリンを注文しよう',
+    12: 'Lv.12！ シュークリームが登場。注文しよう',
   }[S.level];
   if (msg) toast(msg, 6000);
   if (S.level >= 3) setExpanded(true, true);
@@ -673,13 +716,12 @@ function onLevelUp() {
 }
 /** レベルで解禁される設備（売り場ケース・調理台）の表示と当たり判定 */
 function applyUnlocks() {
-  fridge.model.group.visible = expanded;
-  sandCase.model.group.visible = expanded && S.level >= 4;
-  hotCase.model.group.visible = expanded && S.level >= 5;
-  makers.sand.model.group.visible = S.level >= 4;
-  makers.fry.model.group.visible = S.level >= 5;
-  const vis = { fridge: expanded, sandcase: expanded && S.level >= 4, hotcase: expanded && S.level >= 5, sand: S.level >= 4, fry: S.level >= 5 };
+  DISPLAYS.forEach((def) => { def.d.model.group.visible = dispShown(def); });
+  const vis = {};
+  DISPLAYS.forEach((def) => { vis[def.id] = dispShown(def); });
+  Object.values(makers).forEach((m) => { m.model.group.visible = S.level >= m.lv; vis[m.id] = S.level >= m.lv; });
   stations.forEach((st) => { if (st.id in vis) st.marker.visible = vis[st.id]; });
+  stationModel.setBowls(S.level);
   rebuildColliders();
 }
 /** 増築：店を右に広げる（床・壁の追加、当たり判定、カメラ位置） */
@@ -717,8 +759,8 @@ function rebuildColliders() {
   else colliders.push({ x0: 3.5, x1: 9, z0: -7, z1: 6 }); // 増築前は右側に出られない
   if (S.level >= 4) colliders.push(...UNLOCK_COLLIDERS.sand);
   if (S.level >= 5) colliders.push(...UNLOCK_COLLIDERS.fry);
-  if (expanded && S.level >= 4) colliders.push(...UNLOCK_COLLIDERS.sandCase);
-  if (expanded && S.level >= 5) colliders.push(...UNLOCK_COLLIDERS.hotCase);
+  if (S.level >= 9) colliders.push(...UNLOCK_COLLIDERS.bento);
+  if (expanded) DISPLAYS.forEach((def) => { if (S.level >= def.lv && UNLOCK_COLLIDERS[def.id]) colliders.push(...UNLOCK_COLLIDERS[def.id]); });
   for (let iz = 0; iz < NAV.nz; iz++) {
     for (let ix = 0; ix < NAV.nx; ix++) {
       const x = NAV.x0 + ix * NAV.cs, z = NAV.z0 + iz * NAV.cs;
@@ -900,23 +942,24 @@ function stationDrop(c) {
   c.rice -= n;
   return n;
 }
-/** 在庫の飲み物を、種類をまぜて冷蔵庫へ */
-function loadFridge() {
+/** 在庫の品（飲み物・お菓子・スイーツ）を、種類をまぜて売り場ケースへ */
+function loadDisplayFromInv(d) {
   let moved = true, total = 0;
-  while (moved && fridge.total < fridge.cap) {
+  while (moved && d.total < d.cap) {
     moved = false;
-    for (const k of DRINK_IDS) {
-      if (!itemUnlocked(k) || S.inv[k] <= 0 || fridge.total >= fridge.cap) continue;
+    for (const k of d.kinds) {
+      if (!itemUnlocked(k) || S.inv[k] <= 0 || d.total >= d.cap) continue;
       S.inv[k]--;
-      fridge.stock[k]++;
+      d.stock[k]++;
       moved = true;
       total++;
     }
   }
-  fridge.refresh();
+  d.refresh();
   orderDirty = true;
   return total;
 }
+const loadFridge = () => loadDisplayFromInv(fridge);
 
 addStation({
   id: 'cooker', use: LAYOUT.cooker.use, radius: 1.5, clickObjs: [cookerModel.group],
@@ -986,18 +1029,7 @@ addStation({
   act() { toggleOrder(true); },
 }, '#e0a020');
 
-// 飲み物の冷蔵庫：在庫の飲み物を、種類をまぜて入れる
-addStation({
-  id: 'fridge', use: LAYOUT.fridge.use, radius: 1.6, clickObjs: [fridge.model.group],
-  prompt() {
-    if (!expanded || fridge.total >= fridge.cap) return null;
-    const n = DRINK_IDS.filter(itemUnlocked).reduce((a, k) => a + S.inv[k], 0);
-    return n > 0 ? `飲み物を冷蔵庫に入れる (在庫 ${n})` : null;
-  },
-  act() { loadFridge(); },
-}, '#2f9be0');
-
-// サンドイッチのケース / ホットスナックのケース：持ってきたものを並べる
+// 売り場ケース：在庫から入れる（飲み物・お菓子・スイーツ）／持ってきたものを並べる（サンド・揚げ物・弁当）
 function placeFoodFrom(c, disp) {
   let placed = 0;
   disp.kinds.forEach((k) => {
@@ -1007,22 +1039,28 @@ function placeFoodFrom(c, disp) {
   });
   return placed;
 }
-[
-  { disp: sandCase, id: 'sandcase', layout: LAYOUT.sandCase, label: 'サンドイッチ', color: '#f2a33a' },
-  { disp: hotCase, id: 'hotcase', layout: LAYOUT.hotCase, label: 'ホットスナック', color: '#d6453d' },
-].forEach(({ disp, id, layout, label, color }) => {
+DISPLAYS.forEach((def) => {
+  const d = def.d;
   addStation({
-    id, use: layout.use, radius: 1.6, clickObjs: [disp.model.group],
+    id: def.id, use: def.layout.use, radius: 1.6, clickObjs: [d.model.group],
     prompt() {
-      if (!disp.model.group.visible || carryKind() !== 'food') return null;
-      const n = disp.kinds.reduce((a, k) => a + carry.food[k], 0);
-      return n > 0 && disp.total < disp.cap ? `${label}を並べる (${n}個)` : null;
+      if (!dispShown(def) || d.total >= d.cap) return null;
+      if (def.mode === 'inv') {
+        const n = d.kinds.filter(itemUnlocked).reduce((a, k) => a + S.inv[k], 0);
+        return n > 0 ? `${def.label}を入れる (在庫 ${n})` : null;
+      }
+      if (carryKind() !== 'food') return null;
+      const n = d.kinds.reduce((a, k) => a + carry.food[k], 0);
+      return n > 0 ? `${def.label}を並べる (${n}個)` : null;
     },
     act() {
-      if (!placeFoodFrom(carry, disp)) return rest('ここには並べられない');
-      refreshCarry();
+      if (def.mode === 'inv') loadDisplayFromInv(d);
+      else {
+        if (!placeFoodFrom(carry, d)) return rest('ここには並べられない');
+        refreshCarry();
+      }
     },
-  }, color);
+  }, def.color);
 });
 
 // 調理台：材料を使ってまとめて作る。できあがったら受け取って、売り場ケースに並べる
@@ -1053,9 +1091,9 @@ function takeMakerOut(m, c) {
   return moved;
 }
 Object.values(makers).forEach((m) => {
-  const layout = m.id === 'sand' ? LAYOUT.sandTable : LAYOUT.fryer;
   addStation({
-    id: m.id, use: layout.use, radius: 1.5, clickObjs: [m.model.group],
+    id: m.id, use: m.use,
+    radius: 1.5, clickObjs: [m.model.group],
     prompt() {
       if (S.level < m.lv) return null;
       if (m.out.length > 0) return carryKind() === null || carryKind() === 'food' ? `${ITEM[m.out[0]].name}を受け取る (${m.out.length}個)` : null;
@@ -1067,7 +1105,7 @@ Object.values(makers).forEach((m) => {
         refreshCarry();
       } else if (m.state === 'idle') openMaker(m);
     },
-  }, m.id === 'sand' ? '#f2a33a' : '#d6453d');
+  }, m.color);
 });
 function updateMakers(dt) {
   Object.values(makers).forEach((m) => {
@@ -1134,11 +1172,13 @@ const ballGroup = new THREE.Group();
 ballGroup.visible = false;
 fpsCam.add(ballGroup);
 const lump = sp(ballGroup, 0.11, '#fbfaf3', [0, 0, 0], { roughness: 0.95 }, 0.82);
-const fillViz = { salt: new THREE.Group(), ume: new THREE.Group(), okaka: new THREE.Group() };
+const fillViz = { salt: new THREE.Group(), ume: new THREE.Group(), okaka: new THREE.Group(), sake: new THREE.Group(), tuna: new THREE.Group() };
 for (let i = 0; i < 12; i++) sp(fillViz.salt, 0.008, '#c9d6df', [Math.cos(i * 2.1) * 0.06, 0.075 + (i % 3) * 0.004, Math.sin(i * 2.1) * 0.06]);
 sp(fillViz.ume, 0.032, '#d6334a', [0, 0.075, 0.025], { roughness: 0.5 }, 0.7);
 sp(fillViz.ume, 0.022, '#c9263c', [0.03, 0.07, 0.0], { roughness: 0.5 }, 0.7);
 for (let i = 0; i < 12; i++) bx(fillViz.okaka, [0.02, 0.006, 0.012], i % 2 ? '#b9794a' : '#dca674', [Math.cos(i * 1.7) * 0.055, 0.074, Math.sin(i * 1.7) * 0.055], { r: 0.002 });
+for (let i = 0; i < 10; i++) bx(fillViz.sake, [0.03, 0.008, 0.016], i % 2 ? '#ffb09a' : '#f27a63', [Math.cos(i * 1.9) * 0.055, 0.074, Math.sin(i * 1.9) * 0.055], { r: 0.002 });
+for (let i = 0; i < 4; i++) sp(fillViz.tuna, 0.022, i % 2 ? '#fff4d6' : '#e9d3a3', [Math.cos(i * 1.6) * 0.04, 0.075, Math.sin(i * 1.6) * 0.04], { roughness: 0.5 });
 Object.values(fillViz).forEach((g) => { g.visible = false; ballGroup.add(g); });
 const doneViz = {};
 KIND_IDS.forEach((k) => {
@@ -1244,6 +1284,8 @@ function exitCraft() {
   orderDirty = true;
 }
 
+const FILL_KIND = { salt: 'shio', ume: 'ume', okaka: 'okaka', sake: 'sake', tuna: 'tuna' }; // 具材 → できるおにぎり
+const FILL_LV = { salt: 1, ume: 2, okaka: 2, sake: 8, tuna: 9 };
 function craftPointerDown(e) {
   if (e.button !== 0 || craft.fly) return;
   const kind = fpsPick();
@@ -1253,16 +1295,16 @@ function craftPointerDown(e) {
     if (stn.rice <= 0) return rest('ごはんがありません');
     stn.rice--;
     startBall(stationModel.tub.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 0.38, 0)));
-  } else if (kind === 'salt' || kind === 'ume' || kind === 'okaka') {
+  } else if (kind in FILL_KIND) {
     if (!b) return rest('先にごはんを取ろう');
     if (b.stage !== 'rice') return rest('具材はもう入っている');
     if (S.inv[kind] <= 0) return rest(`${ING[kind].name}の在庫がない…`);
     S.inv[kind]--;
     b.filling = kind;
-    b.kind = kind === 'salt' ? 'shio' : kind;
+    b.kind = FILL_KIND[kind];
     b.stage = 'filled';
     fillViz[kind].visible = true;
-    const col = kind === 'salt' ? '#ffffff' : kind === 'ume' ? '#d6334a' : '#c99562';
+    const col = { salt: '#ffffff', ume: '#d6334a', okaka: '#c99562', sake: '#ff8a75', tuna: '#ecd9ad' }[kind];
     burst(col, 12, new THREE.Vector3(0, 0.1, -0.82));
     orderDirty = true;
   } else if (kind === 'ball') {
@@ -1509,8 +1551,8 @@ function updateCraft(dt) {
     o.scale.setScalar(o.scale.x + (want - o.scale.x) * k);
   });
   fpsTags.rice.set({ chip: `🍚 ごはん ×${stn.rice}`, tone: stn.rice ? 'good' : 'warn' });
-  ['salt', 'ume', 'okaka'].forEach((id) => {
-    const locked = (id === 'ume' || id === 'okaka') && S.level < 2;
+  Object.keys(FILL_KIND).forEach((id) => {
+    const locked = S.level < FILL_LV[id];
     fpsTags[id].on = !locked;
     fpsTags[id].set({ chip: `${id === 'salt' ? '🧂' : ING[id].icon} ${ING[id].name} ×${S.inv[id]}`, tone: S.inv[id] ? 'good' : 'warn' });
   });
@@ -1562,8 +1604,8 @@ function chooseFrom(ids, n) {
   }
   return out;
 }
-const STOP_ORDER = ['shelf', 'sand', 'hot', 'fridge'];
-const STOP_CAT = { shelf: 'onigiri', sand: 'sand', hot: 'fried', fridge: 'drink' };
+const STOP_ORDER = ['shelf', 'sand', 'bento', 'hot', 'snack', 'sweet', 'fridge']; // 店内をまわる順
+const STOP_CAT = { shelf: 'onigiri', ...Object.fromEntries(DISPLAYS.map((def) => [def.stop, def.cat])) };
 
 class Customer {
   constructor(shelf) {
@@ -1594,31 +1636,30 @@ class Customer {
     this.emoTimer = 0;
     customers.push(this);
   }
-  /** 立ち寄る場所：おにぎりの棚 / サンドのケース / ホットスナック / 飲み物の冷蔵庫（解禁され、在庫があるものだけ） */
+  /** 立ち寄る場所：おにぎりの棚＋（解禁され、在庫がある）売り場ケース */
   makePlan() {
     const opt = [];
-    if (S.level >= 4 && sandCase.total > 0 && Math.random() < 0.3) opt.push('sand');
-    if (S.level >= 5 && hotCase.total > 0 && Math.random() < 0.3) opt.push('hot');
-    if (expanded && fridge.total > 0 && Math.random() < 0.35) opt.push('fridge');
+    DISPLAYS.forEach((def) => {
+      if (dispShown(def) && def.d.total > 0 && Math.random() < def.p) opt.push(def.stop);
+    });
     const plan = (Math.random() < 0.75 || !opt.length ? ['shelf'] : []).concat(opt);
     return STOP_ORDER.filter((x) => plan.includes(x));
   }
   makeWish(stop) {
     const r = Math.random();
     if (stop === 'shelf') return Array.from({ length: r < 0.8 ? 1 : r < 0.97 ? 2 : 3 }, () => chooseKind());
-    if (stop === 'fridge') return chooseFrom(DRINK_IDS, r < 0.7 ? 1 : 2);
-    if (stop === 'sand') return chooseFrom(['tamago', 'ham'], r < 0.85 ? 1 : 2);
-    return chooseFrom(['karaage', 'korokke'], r < 0.8 ? 1 : 2);
+    const d = DISP_BY_STOP[stop].d;
+    return chooseFrom(d.kinds, r < (STOP_CAT[stop] === 'drink' ? 0.7 : 0.85) ? 1 : 2);
   }
   /** その場所の「取る・数える」の窓口 */
   source(stop) {
     const sh = this.shelf;
     if (stop === 'shelf') return { kinds: KIND_IDS, count: (k) => shelfKindCount(sh, k), take: (k) => shelfTake(sh, k), refresh: () => refreshShelf(sh) };
-    return { fridge, sand: sandCase, hot: hotCase }[stop];
+    return DISP_BY_STOP[stop].d;
   }
   stopTarget(i) {
     const stop = this.plan[i];
-    const u = stop === 'shelf' ? this.shelf.pos.use : { fridge: LAYOUT.fridge.use, sand: LAYOUT.sandCase.use, hot: LAYOUT.hotCase.use }[stop];
+    const u = stop === 'shelf' ? this.shelf.pos.use : DISP_BY_STOP[stop].layout.use;
     return new THREE.Vector3(u.x + rand(-0.4, 0.4), 0, u.z);
   }
   setEmo(e, t = 0) { this.emo = e; this.emoTimer = t; }
@@ -1694,7 +1735,7 @@ class Customer {
         break;
       case 'browse': {
         const stop = this.plan[this.stopIdx];
-        this.facing = stop === 'shelf' ? Math.atan2(-Math.sin(sh.pos.rot), -Math.cos(sh.pos.rot)) : stop === 'hot' ? Math.PI / 2 : Math.PI;
+        this.facing = stop === 'shelf' ? Math.atan2(-Math.sin(sh.pos.rot), -Math.cos(sh.pos.rot)) : DISP_BY_STOP[stop].face;
         this.timer -= dt;
         if (this.timer <= 0) {
           this.pickAt(stop);
@@ -1770,11 +1811,8 @@ class Customer {
   /** 買ったものを、それぞれの売り場に戻す */
   returnItems() {
     Object.entries(this.bag).forEach(([k, n]) => {
-      const cat = ITEM[k].cat;
-      if (cat === 'onigiri') shelfAdd(this.shelf, k, n);
-      else if (cat === 'drink') fridge.add(k, n);
-      else if (cat === 'sand') sandCase.add(k, n);
-      else hotCase.add(k, n);
+      if (ITEM[k].cat === 'onigiri') shelfAdd(this.shelf, k, n);
+      else DISPLAYS.find((def) => def.d.kinds.includes(k)).d.add(k, n);
     });
     this.bag = {};
     refreshShelf(this.shelf);
@@ -1917,8 +1955,8 @@ const ROLES = {
   cashier: { name: 'レジ係', desc: 'お客さんが会計を待っていたら、自動でレジを打つ', lv: 1, hire: 2000, wage: 120 },
   cook: { name: '炊飯係', desc: 'ごはんを炊いて、握り台まで運ぶ', lv: 2, hire: 2500, wage: 150 },
   maker: { name: '握り係', desc: '握り台でおにぎりを握り、トレーに置く（棚の段の設定に合わせる）', lv: 3, hire: 3500, wage: 200 },
-  stocker: { name: '品出し係', desc: 'トレー・サンド台・揚げ物台の商品を売り場に並べ、飲み物を冷蔵庫に入れる', lv: 4, hire: 3000, wage: 200 },
-  kitchen: { name: '厨房係', desc: 'サンドイッチ台と揚げ物台で、足りなくなった商品を作る', lv: 5, hire: 4000, wage: 250 },
+  stocker: { name: '品出し係', desc: 'トレーや調理台の商品を売り場に並べ、飲み物・お菓子・スイーツも補充する', lv: 4, hire: 3000, wage: 200 },
+  kitchen: { name: '厨房係', desc: 'サンドイッチ台・揚げ物台・弁当台で、足りなくなった商品を作る', lv: 5, hire: 4000, wage: 250 },
 };
 const ROLE_IDS = ['cashier', 'cook', 'maker', 'stocker', 'kitchen'];
 const hasStaff = (r) => !!S.staff[r];
@@ -2074,9 +2112,8 @@ class Worker {
     const sh = shelves[0];
     const back = () => ({ act: (w) => { // 置けずに余ったものは元の場所へ戻す
       KIND_IDS.forEach((k) => { for (let i = 0; i < w.carry.oni[k]; i++) { stn.tray[k]++; stn.order.push(k); } w.carry.oni[k] = 0; });
-      FOOD_IDS.forEach((k) => { const m = ITEM[k].cat === 'sand' ? makers.sand : makers.fry; for (let i = 0; i < w.carry.food[k]; i++) m.out.push(k); w.carry.food[k] = 0; });
-      makers.sand.model.setOutput(makers.sand.out);
-      makers.fry.model.setOutput(makers.fry.out);
+      FOOD_IDS.forEach((k) => { const m = makers[RECIPES[k].maker]; for (let i = 0; i < w.carry.food[k]; i++) m.out.push(k); w.carry.food[k] = 0; });
+      Object.values(makers).forEach((m) => m.model.setOutput(m.out));
       w.refreshHold();
     } });
     // やれる仕事を集めて、その中からランダムに1つ（同じ仕事ばかりに偏らない）
@@ -2091,33 +2128,34 @@ class Worker {
         ...goHome(),
       ]);
     }
-    for (const [m, disp, layout] of [[makers.sand, sandCase, LAYOUT.sandCase], [makers.fry, hotCase, LAYOUT.hotCase]]) {
-      if (S.level >= m.lv && expanded && m.out.length && disp.total < disp.cap) {
-        const mu = m.id === 'sand' ? LAYOUT.sandTable.use : LAYOUT.fryer.use;
+    Object.values(makers).forEach((m) => {
+      const def = DISPLAYS.find((x) => x.d === m.display);
+      if (S.level >= m.lv && dispShown(def) && m.out.length && m.display.total < m.display.cap) {
         jobs.push([
-          use(mu),
+          use(m.use),
           { act: (w) => { takeMakerOut(m, w.carry); w.refreshHold(); } },
-          use(layout.use),
-          { act: (w) => { placeFoodFrom(w.carry, disp); w.refreshHold(); } },
+          use(def.layout.use),
+          { act: (w) => { placeFoodFrom(w.carry, m.display); w.refreshHold(); } },
           back(),
           ...goHome(),
         ]);
       }
-    }
-    if (expanded && fridge.total < fridge.cap && DRINK_IDS.some((k) => itemUnlocked(k) && S.inv[k] > 0)) {
-      jobs.push([use(LAYOUT.fridge.use), { act: () => { loadFridge(); } }, ...goHome()]);
-    }
+    });
+    DISPLAYS.filter((def) => def.mode === 'inv').forEach((def) => {
+      if (dispShown(def) && def.d.total < def.d.cap && def.d.kinds.some((k) => itemUnlocked(k) && S.inv[k] > 0)) {
+        jobs.push([use(def.layout.use), { act: () => { loadDisplayFromInv(def.d); } }, ...goHome()]);
+      }
+    });
     if (jobs.length) this.setSteps(pick(jobs));
     else if (c.rice === 0 && totalOf(c) === 0) this.setSteps(goHome());
   }
   decideKitchen(goHome, use) {
-    for (const [m, disp] of [[makers.sand, sandCase], [makers.fry, hotCase]]) {
-      if (S.level < m.lv || !expanded || m.state !== 'idle' || m.out.length || disp.total >= 8) continue;
+    for (const m of Object.values(makers)) {
+      if (S.level < m.lv || !expanded || m.state !== 'idle' || m.out.length || m.display.total >= 8) continue;
       const ids = Object.keys(RECIPES).filter((id) => RECIPES[id].maker === m.id && canMake(id));
       if (!ids.length) continue;
-      ids.sort((a, b) => disp.count(a) - disp.count(b)); // いちばん少ないものを作る
-      const u = m.id === 'sand' ? LAYOUT.sandTable.use : LAYOUT.fryer.use;
-      this.setSteps([use(u), { act: () => { startBatch(m, ids[0]); } }, ...goHome()]);
+      ids.sort((a, b) => m.display.count(a) - m.display.count(b)); // いちばん少ないものを作る
+      this.setSteps([use(m.use), { act: () => { startBatch(m, ids[0]); } }, ...goHome()]);
       return;
     }
     this.setSteps(goHome());
@@ -2189,7 +2227,7 @@ function applyUpgrades() {
   syncWorkers();
   stationModel.setBowls(S.level);
   setExpanded(S.level >= 3, false);
-  [fridge, sandCase, hotCase].forEach((d) => d.refresh());
+  DISPLAYS.forEach((def) => def.d.refresh());
   applyUnlocks();
   placeWipeCam();
   shopDirty = orderDirty = true;
@@ -2532,12 +2570,15 @@ function updateWorld(dt) {
 
   // 売り場ケースのラベル・調理台・増築アニメ
   const shown = expandT >= 1;
-  fridgeTag.on = expanded && shown;
-  if (fridgeTag.on) fridgeTag.set({ chip: `💧 ${fridge.total} / ${fridge.cap}` + (S.level >= 5 ? '　' + DRINK_IDS.filter((k) => itemUnlocked(k) && fridge.stock[k]).map((k) => `${ITEM[k].label}${fridge.stock[k]}`).join(' ') : ''), tone: fridge.total ? 'good' : '' });
-  sandCaseTag.on = expanded && shown && S.level >= 4;
-  if (sandCaseTag.on) sandCaseTag.set({ chip: `🥪 ${sandCase.total} / ${sandCase.cap}`, tone: sandCase.total ? 'good' : '' });
-  hotCaseTag.on = expanded && shown && S.level >= 5;
-  if (hotCaseTag.on) hotCaseTag.set({ chip: `🍗 ${hotCase.total} / ${hotCase.cap}`, tone: hotCase.total ? 'good' : '' });
+  DISPLAYS.forEach((def) => {
+    const on = dispShown(def) && shown;
+    def.tag.on = on;
+    if (!on) return;
+    const d = def.d;
+    let chip = `${CAT_ICON[def.cat]} ${d.total} / ${d.cap}`;
+    if (d.kinds.filter(itemUnlocked).length > 1) chip += '　' + d.kinds.filter((k) => itemUnlocked(k) && d.stock[k]).map((k) => `${ITEM[k].label}${d.stock[k]}`).join(' ');
+    def.tag.set({ chip, tone: d.total ? 'good' : '' });
+  });
   updateMakers(dt);
   updateWorkers(dt);
   if (expandT < 1) {
@@ -2635,7 +2676,7 @@ function updateHud(dt) {
   }
   if (makerOpen && makerCur) {
     renderMaker();
-    const u = makerCur.id === 'sand' ? LAYOUT.sandTable.use : LAYOUT.fryer.use;
+    const u = makerCur.use;
     if (Math.hypot(player.pos.x - u.x, player.pos.z - u.z) > 2.6) toggleMaker(false);
   }
 }
@@ -2799,4 +2840,4 @@ showMenu('main');
 
 loop();
 // 動作確認用
-window.__game = { frame, fpsCam, shelfMode, workers, hireStaff, payWages, makers, sandCase, hotCase, S, stations, shelves, cooker, stn, customers, queue, player, view, craft, carry, fridge, addExp, findPath };
+window.__game = { frame, fpsCam, shelfMode, DISPLAYS, workers, hireStaff, payWages, makers, sandCase, hotCase, S, stations, shelves, cooker, stn, customers, queue, player, view, craft, carry, fridge, addExp, findPath };
