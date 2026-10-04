@@ -57,9 +57,10 @@ npm run dist         # インストーラを作る（dist-installer/）
 ### 新しいバージョンを公開する
 
 ```bash
-npm version patch    # 1.0.0 -> 1.0.1
-npm run release      # ビルドして GitHub Releases にアップロード（gh にログイン済みなら自動）
-git push --follow-tags
+npm version minor --no-git-tag-version   # 1.1.0 -> 1.2.0（patch / major でも可）
+git add -A && git commit -m "v1.2.0: ..." && git tag v1.2.0
+git push origin main && git push origin v1.2.0
+npm run release                          # ビルドして GitHub Releases にアップロード（gh にログイン済みなら自動）
 ```
 
 アプリは起動のたびに GitHub Releases の最新版を確認し、新しければ自動で更新します。
