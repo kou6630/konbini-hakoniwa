@@ -35,6 +35,10 @@ export const LAYOUT = {
   bentoTable: { x: -3.15, z: 2.2, rot: -Math.PI / 2, len: 1.6, use: { x: -4.55, z: 2.2 } },
   bentoCase: { x: 5.35, z: -1.5, rot: -Math.PI / 2, use: { x: 3.75, z: -1.5 } },
   sweetCase: { x: 5.35, z: 1.7, rot: -Math.PI / 2, use: { x: 3.75, z: 1.7 } },
+  // Lv.13 蒸し器台（バックヤード）/ 中華まんケース（右壁ぎわ）、Lv.14 タバコ棚（奥の壁ぎわ）
+  steamTable: { x: -3.5, z: -5.4, rot: -Math.PI / 2, len: 1.2, use: { x: -4.8, z: -5.4 } },
+  steamCase: { x: 5.35, z: 2.9, rot: -Math.PI / 2, use: { x: 3.75, z: 2.9 } },
+  tobaccoRack: { x: 3.125, z: -7.725, rot: 0, use: { x: 3.125, z: -5.8 } },
 };
 /** 動かせる設備の初期の当たり判定（初期配置のもの。実際は設備の位置・向きから作り直す） */
 export const ITEM_BOXES = {
@@ -52,6 +56,9 @@ export const ITEM_BOXES = {
   bentocase: { x0: 4.725, x1: 5.975, z0: -2.0, z1: -1.0 },
   snackrack: { x0: 4.725, x1: 5.975, z0: -0.4, z1: 0.6 },
   sweetcase: { x0: 4.725, x1: 5.975, z0: 1.2, z1: 2.2 },
+  steam: { x0: -4.05, x1: -3.0, z0: -6.0, z1: -4.8 },
+  steamcase: { x0: 4.725, x1: 5.975, z0: 2.4, z1: 3.4 },
+  tobaccorack: { x0: 2.625, x1: 3.625, z0: -8.5, z1: -7.1 },
 };
 /** Lv.3 の増築で追加される、動かせない当たり判定 */
 export const EXP_COLLIDERS = [
@@ -1031,12 +1038,39 @@ export function makeSweet(kind = 'pudding', scale = 1) {
   return g;
 }
 
-/* ---------- 売り場ケース（サンドイッチ / ホットスナック / お弁当 / お菓子 / スイーツ） 幅1.0m × 奥行1.25m ---------- */
+/* ---------- 中華まん・たばこ ---------- */
+export function makeNikuman(kind = 'nikuman', scale = 1) {
+  const g = new THREE.Group();
+  const s1 = scale;
+  bx(g, [0.17 * s1, 0.012 * s1, 0.17 * s1], '#f2e6c8', [0, 0, 0], { r: 0.004 }); // 敷き紙
+  const bun = sp(g, 0.088 * s1, '#fbf4e4', [0, 0.07 * s1, 0], { roughness: 0.9 }, 0.82);
+  bun.scale.x = 1.05;
+  for (let i = 0; i < 7; i++) { // 上のひだ
+    const a = (i / 7) * Math.PI * 2;
+    sp(g, 0.014 * s1, '#f3e8cf', [Math.cos(a) * 0.026 * s1, 0.128 * s1, Math.sin(a) * 0.026 * s1], { roughness: 0.9 });
+  }
+  if (kind === 'anman') sp(g, 0.016 * s1, '#d6453d', [0, 0.136 * s1, 0], { roughness: 0.6 }); // 赤いしるし
+  else sp(g, 0.018 * s1, '#e8d9b4', [0, 0.14 * s1, 0], { roughness: 0.9 });
+  return g;
+}
+export function makeTobacco(kind = 'tabaco_a', scale = 1) {
+  const g = new THREE.Group();
+  const s1 = scale;
+  const col = kind === 'tabaco_a' ? '#c9302c' : '#2f9e5a';
+  bx(g, [0.09 * s1, 0.13 * s1, 0.036 * s1], '#f3f3ef', [0, 0, 0], { r: 0.004 });
+  bx(g, [0.092 * s1, 0.085 * s1, 0.038 * s1], col, [0, 0.045 * s1, 0], { r: 0.004 });
+  bx(g, [0.05 * s1, 0.028 * s1, 0.002 * s1], '#f6d56a', [0, 0.07 * s1, 0.02 * s1], { r: 0.001 });
+  return g;
+}
+
+/* ---------- 売り場ケース（サンドイッチ / ホットスナック / お弁当 / お菓子 / スイーツ / 中華まん / たばこ） 幅1.0m × 奥行1.25m ---------- */
 const CASE_CFG = {
   sand: { tone: '#f2a33a', text: 'サンドイッチ', wall: '#f5ecdd', glow: '#fff2c8', emi: '#ffe08a', glass: '#fff4d6', kinds: ['tamago', 'ham'], make: (k) => makeSandwich(k, 0.95) },
   hot: { tone: '#d6453d', text: 'ホットスナック', wall: '#f4e4dc', glow: '#ffd9a0', emi: '#ff9a3c', glass: '#ffe9cf', kinds: ['karaage', 'korokke'], make: (k) => makeFried(k, 0.9) },
   bento: { tone: '#8a5a35', text: 'お弁当', wall: '#f3eadf', glow: '#fff2c8', emi: '#ffe08a', glass: '#fff4d6', kinds: ['bento_kara', 'bento_nori'], make: (k) => makeBento(k, 1.0) },
   snack: { tone: '#e8a317', text: 'お菓子', wall: '#f7efd8', glow: '#fff7d0', emi: '#ffe9a0', glass: '#fff9e0', kinds: ['chips', 'choco'], make: (k) => makeSnack(k, 1.0) },
+  steam: { tone: '#d9772a', text: '中華まん', wall: '#f6e7d4', glow: '#ffe3b0', emi: '#ffb85a', glass: '#fff0d8', kinds: ['nikuman', 'anman'], make: (k) => makeNikuman(k, 0.95) },
+  tobacco: { tone: '#3a4058', text: 'たばこ', wall: '#ece8e2', glow: '#e8f0ff', emi: '#cfe0ff', glass: '#f2f5ff', kinds: ['tabaco_a', 'tabaco_b'], make: (k) => makeTobacco(k, 1.7) },
   sweet: { tone: '#e8688a', text: 'スイーツ', wall: '#fbe9ef', glow: '#ffe3ee', emi: '#ffc2d6', glass: '#fff0f5', kinds: ['pudding', 'cream'], make: (k) => makeSweet(k, 1.0) },
 };
 export function buildDisplayCase(type) {
@@ -1186,6 +1220,60 @@ export function buildFryer(len = 1.4) {
         s2.position.set((i % 2 ? 0.32 : -0.32) + Math.sin(i * 2.1 + t) * 0.1, top + 0.3 + k * 0.9, -0.05);
         s2.scale.setScalar(0.6 + k);
         s2.material.opacity = 0.45 * (1 - k);
+      });
+    },
+    setOutput(kinds) {
+      cache.forEach((o) => { o.visible = false; });
+      kinds.slice(0, 4).forEach((k, i) => { get(i, k).visible = true; });
+    },
+  };
+}
+
+/* ---------- 蒸し器台（バックヤード）長さ len × 奥行 1.0。せいろ2つ ---------- */
+export function buildSteamTable(len = 1.4) {
+  const g = new THREE.Group();
+  bx(g, [len, 0.9, 1.0], '#cfd6db', [0, 0, 0], { r: 0.05 });
+  bx(g, [len + 0.1, 0.07, 1.1], '#e8ecef', [0, 0.9, 0], { r: 0.03 });
+  const top = 0.97;
+  [-0.32, 0.32].forEach((x) => {
+    cy(g, 0.22, 0.22, 0.06, '#7a838b', [x, top, -0.12], 24);
+    for (let i = 0; i < 2; i++) cy(g, 0.24, 0.24, 0.1, '#c9a05f', [x, top + 0.06 + i * 0.1, -0.12], 24);
+    cy(g, 0.26, 0.24, 0.05, '#b88a45', [x, top + 0.26, -0.12], 24);
+    sp(g, 0.03, '#7a5a2a', [x, top + 0.33, -0.12]);
+  });
+  const steam = [];
+  const sm = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.5, depthWrite: false });
+  for (let i = 0; i < 8; i++) {
+    const s2 = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), sm.clone());
+    s2.visible = false;
+    g.add(s2);
+    steam.push(s2);
+  }
+  // 出来上がりを置くバット
+  bx(g, [0.62, 0.03, 0.3], '#d9dde0', [0.0, top, 0.34], { r: 0.01 });
+  const cache = new Map();
+  const get = (i, kind) => {
+    const key = i * 10 + (kind === 'anman' ? 1 : 0);
+    let o = cache.get(key);
+    if (!o) {
+      o = makeNikuman(kind, 0.8);
+      o.position.set(-0.22 + (i % 4) * 0.15, top + 0.03, 0.34);
+      g.add(o);
+      cache.set(key, o);
+    }
+    return o;
+  };
+  return {
+    group: g,
+    /** 蒸しているあいだ：湯気 */
+    animate(t, on) {
+      steam.forEach((s2, i) => {
+        s2.visible = on;
+        if (!on) return;
+        const k = (t * 0.6 + i / steam.length) % 1;
+        s2.position.set((i % 2 ? 0.32 : -0.32) + Math.sin(i * 2.1 + t) * 0.1, top + 0.4 + k * 0.9, -0.12);
+        s2.scale.setScalar(0.6 + k);
+        s2.material.opacity = 0.5 * (1 - k);
       });
     },
     setOutput(kinds) {

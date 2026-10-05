@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import {
   LAYOUT, COLLIDERS, EXP_COLLIDERS, ITEM_BOXES, EXP_WIDTH, KIND_IDS, bx, cy, sp,
-  makeOnigiri, makeSandwich, makeFried, makeBento, makePerson, makeRobot, buildCharger, makeCar, makeBus, buildLot, LOT, LOT_GAPS, buildShelf, buildCooker, buildStation, buildTrayStand, buildRegister, buildDoor, buildBackDoor, buildFridge, buildDisplayCase, buildSandTable, buildFryer, buildBentoTable, buildExpansion, buildWorld,
+  makeOnigiri, makeSandwich, makeFried, makeBento, makeNikuman, makePerson, makeRobot, buildCharger, makeCar, makeBus, buildLot, LOT, LOT_GAPS, buildShelf, buildCooker, buildStation, buildTrayStand, buildRegister, buildDoor, buildBackDoor, buildFridge, buildDisplayCase, buildSandTable, buildFryer, buildBentoTable, buildSteamTable, buildExpansion, buildWorld,
 } from './models.js';
 
 /* =====================================================================
@@ -51,6 +51,8 @@ const FOODS = {
   korokke: { name: 'コロッケ', label: 'コロッケ', price: 140, lv: 7, cat: 'fried', weight: 0.4 },
   bento_kara: { name: '唐揚げ弁当', label: '唐揚げ弁当', price: 480, lv: 9, cat: 'bento', weight: 0.6 },
   bento_nori: { name: 'のり弁当', label: 'のり弁当', price: 420, lv: 10, cat: 'bento', weight: 0.4 },
+  nikuman: { name: '肉まん', label: '肉まん', price: 180, lv: 13, cat: 'steam', weight: 0.6 },
+  anman: { name: 'あんまん', label: 'あんまん', price: 170, lv: 15, cat: 'steam', weight: 0.4 },
 };
 const DRINKS = {
   water: { name: '水', label: '水', price: 120, lv: 3, cat: 'drink', weight: 0.5 },
@@ -62,6 +64,8 @@ const GOODS = {
   choco: { name: 'チョコレート', label: 'チョコ', price: 130, lv: 10, cat: 'snack', weight: 0.4 },
   pudding: { name: 'プリン', label: 'プリン', price: 180, lv: 11, cat: 'sweet', weight: 0.6 },
   cream: { name: 'シュークリーム', label: 'シュー', price: 200, lv: 12, cat: 'sweet', weight: 0.4 },
+  tabaco_a: { name: 'たばこ（赤）', label: 'たばこ赤', price: 580, lv: 14, cat: 'tobacco', weight: 0.6 },
+  tabaco_b: { name: 'たばこ（緑）', label: 'たばこ緑', price: 540, lv: 16, cat: 'tobacco', weight: 0.4 },
 };
 const FOOD_IDS = Object.keys(FOODS);
 const DRINK_IDS = Object.keys(DRINKS);
@@ -73,7 +77,7 @@ const ITEM = {
   ...GOODS,
 };
 const itemUnlocked = (id) => S.level >= ITEM[id].lv;
-const CAT_ICON = { onigiri: '🍙', drink: '💧', sand: '🥪', fried: '🍗', bento: '🍱', snack: '🍿', sweet: '🍮' };
+const CAT_ICON = { onigiri: '🍙', drink: '💧', sand: '🥪', fried: '🍗', bento: '🍱', snack: '🍿', sweet: '🍮', steam: '🥟', tobacco: '🚬' };
 // 食材・仕入れ品（裏口から注文）
 const ING = {
   rice: { name: '米', icon: '🍚', pack: 10, cost: 100, lv: 1 },
@@ -94,8 +98,12 @@ const ING = {
   choco: { name: 'チョコレート', icon: '🍫', pack: 10, cost: 600, lv: 10 },
   pudding: { name: 'プリン', icon: '🍮', pack: 10, cost: 800, lv: 11 },
   cream: { name: 'シュークリーム', icon: '🥐', pack: 10, cost: 900, lv: 12 },
+  nikuman_raw: { name: '肉まん（冷凍）', icon: '🥟', pack: 10, cost: 350, lv: 13 },
+  tabaco_a: { name: 'たばこ（赤）', icon: '🚬', pack: 10, cost: 3600, lv: 14 },
+  anman_raw: { name: 'あんまん（冷凍）', icon: '🥟', pack: 10, cost: 330, lv: 15 },
+  tabaco_b: { name: 'たばこ（緑）', icon: '🚬', pack: 10, cost: 3400, lv: 16 },
 };
-const ING_IDS = ['rice', 'salt', 'ume', 'okaka', 'water', 'bread', 'egg', 'tea', 'chicken', 'hamslice', 'potato', 'coffee', 'sake', 'chips', 'tuna', 'choco', 'pudding', 'cream'];
+const ING_IDS = ['rice', 'salt', 'ume', 'okaka', 'water', 'bread', 'egg', 'tea', 'chicken', 'hamslice', 'potato', 'coffee', 'sake', 'chips', 'tuna', 'choco', 'pudding', 'cream', 'nikuman_raw', 'tabaco_a', 'anman_raw', 'tabaco_b'];
 // 作る台のレシピ（1回に batch 個。材料は 1個あたり ing ぶん）
 const RECIPES = {
   tamago: { maker: 'sand', ing: { bread: 1, egg: 1 }, batch: 4 },
@@ -104,6 +112,8 @@ const RECIPES = {
   korokke: { maker: 'fry', ing: { potato: 1 }, batch: 4 },
   bento_kara: { maker: 'bento', ing: { rice: 1, chicken: 1 }, batch: 4 },
   bento_nori: { maker: 'bento', ing: { rice: 1, egg: 1 }, batch: 4 },
+  nikuman: { maker: 'steam', ing: { nikuman_raw: 1 }, batch: 4 },
+  anman: { maker: 'steam', ing: { anman_raw: 1 }, batch: 4 },
 };
 const MAKER_TIME = 8;
 const emptyCounts = () => Object.fromEntries(KIND_IDS.map((k) => [k, 0]));
@@ -117,7 +127,7 @@ const listOf = (c) => {
 const defaultState = () => ({
   money: 500, exp: 0, level: 1, day: 1, time: DAY_START, opened: false, rep: 3,
   up: { shelfCap: 0, cooker: 0, craft: 0, carry: 0, poster: 0 },
-  inv: { rice: 8, salt: 8, ume: 0, okaka: 0, water: 0, bread: 0, egg: 0, tea: 0, chicken: 0, hamslice: 0, potato: 0, coffee: 0, sake: 0, tuna: 0, chips: 0, choco: 0, pudding: 0, cream: 0 },
+  inv: { rice: 8, salt: 8, ume: 0, okaka: 0, water: 0, bread: 0, egg: 0, tea: 0, chicken: 0, hamslice: 0, potato: 0, coffee: 0, sake: 0, tuna: 0, chips: 0, choco: 0, pudding: 0, cream: 0, nikuman_raw: 0, anman_raw: 0, tabaco_a: 0, tabaco_b: 0 },
   pending: [],
   staff: {}, // 買ったロボット { role: true }
   robLv: {}, // ロボットのレベル { role: 0〜4 }
@@ -408,6 +418,8 @@ const hotCase = new Display('hot', ['karaage', 'korokke'], 12, buildDisplayCase(
 const bentoCase = new Display('bento', ['bento_kara', 'bento_nori'], 12, buildDisplayCase('bento'), LAYOUT.bentoCase);
 const snackRack = new Display('snack', ['chips', 'choco'], 12, buildDisplayCase('snack'), LAYOUT.snackRack);
 const sweetCase = new Display('sweet', ['pudding', 'cream'], 12, buildDisplayCase('sweet'), LAYOUT.sweetCase);
+const steamCase = new Display('steam', ['nikuman', 'anman'], 12, buildDisplayCase('steam'), LAYOUT.steamCase);
+const tobaccoRack = new Display('tobacco', ['tabaco_a', 'tabaco_b'], 12, buildDisplayCase('tobacco'), LAYOUT.tobaccoRack);
 /** 売り場ケースの一覧（mode: 'inv'=在庫から入れる / 'carry'=持ってきたものを並べる、face=お客さんが向く向き） */
 const DISPLAYS = [
   { d: fridge, stop: 'fridge', id: 'fridge', cat: 'drink', lv: 3, mode: 'inv', label: '飲み物', color: '#2f9be0', layout: LAYOUT.fridge, p: 0.35, face: Math.PI, tagY: 2.5 },
@@ -416,6 +428,8 @@ const DISPLAYS = [
   { d: snackRack, stop: 'snack', id: 'snackrack', cat: 'snack', lv: 8, mode: 'inv', label: 'お菓子', color: '#e8a317', layout: LAYOUT.snackRack, p: 0.25, face: Math.PI / 2, tagY: 2.5 },
   { d: bentoCase, stop: 'bento', id: 'bentocase', cat: 'bento', lv: 9, mode: 'carry', label: 'お弁当', color: '#8a5a35', layout: LAYOUT.bentoCase, p: 0.25, face: Math.PI / 2, tagY: 2.5 },
   { d: sweetCase, stop: 'sweet', id: 'sweetcase', cat: 'sweet', lv: 11, mode: 'inv', label: 'スイーツ', color: '#e8688a', layout: LAYOUT.sweetCase, p: 0.25, face: Math.PI / 2, tagY: 2.5 },
+  { d: steamCase, stop: 'steam', id: 'steamcase', cat: 'steam', lv: 13, mode: 'carry', label: '中華まん', color: '#d9772a', layout: LAYOUT.steamCase, p: 0.3, face: Math.PI / 2, tagY: 2.5 },
+  { d: tobaccoRack, stop: 'tobacco', id: 'tobaccorack', cat: 'tobacco', lv: 14, mode: 'inv', label: 'たばこ', color: '#3a4058', layout: LAYOUT.tobaccoRack, p: 0.2, face: Math.PI, tagY: 2.5 },
 ];
 const DISP_BY_STOP = Object.fromEntries(DISPLAYS.map((x) => [x.stop, x]));
 const dispShown = (def) => expanded && S.level >= def.lv;
@@ -430,7 +444,10 @@ fryerModel.group.rotation.y = LAYOUT.fryer.rot;
 const bentoTableModel = buildBentoTable(LAYOUT.bentoTable.len);
 bentoTableModel.group.position.set(LAYOUT.bentoTable.x, 0, LAYOUT.bentoTable.z);
 bentoTableModel.group.rotation.y = LAYOUT.bentoTable.rot;
-[sandTableModel, fryerModel, bentoTableModel].forEach((mdl) => {
+const steamTableModel = buildSteamTable(LAYOUT.steamTable.len);
+steamTableModel.group.position.set(LAYOUT.steamTable.x, 0, LAYOUT.steamTable.z);
+steamTableModel.group.rotation.y = LAYOUT.steamTable.rot;
+[sandTableModel, fryerModel, bentoTableModel, steamTableModel].forEach((mdl) => {
   mdl.group.visible = false;
   scene.add(mdl.group);
   shadowize(mdl.group);
@@ -438,6 +455,7 @@ bentoTableModel.group.rotation.y = LAYOUT.bentoTable.rot;
 const makers = {
   sand: { id: 'sand', name: 'サンドイッチ台', icon: '🥪', lv: 4, color: '#f2a33a', model: sandTableModel, use: LAYOUT.sandTable.use, display: sandCase, state: 'idle', recipe: null, t: 0, out: [] },
   fry: { id: 'fry', name: '揚げ物台', icon: '🍗', lv: 5, color: '#d6453d', model: fryerModel, use: LAYOUT.fryer.use, display: hotCase, state: 'idle', recipe: null, t: 0, out: [] },
+  steam: { id: 'steam', name: '蒸し器台', icon: '🥟', lv: 13, color: '#d9772a', model: steamTableModel, use: LAYOUT.steamTable.use, display: steamCase, state: 'idle', recipe: null, t: 0, out: [] },
   bento: { id: 'bento', name: '弁当台', icon: '🍱', lv: 9, color: '#8a5a35', model: bentoTableModel, use: LAYOUT.bentoTable.use, display: bentoCase, state: 'idle', recipe: null, t: 0, out: [] },
 };
 
@@ -494,7 +512,7 @@ function fillHold(hold, kind, data) {
     });
   } else if (kind === 'food') {
     FOOD_IDS.flatMap((k) => Array(data[k]).fill(k)).slice(0, 4).forEach((k, i) => {
-      const o = ITEM[k].cat === 'sand' ? makeSandwich(k, 0.8) : ITEM[k].cat === 'bento' ? makeBento(k, 0.7) : makeFried(k, 0.7);
+      const o = ITEM[k].cat === 'sand' ? makeSandwich(k, 0.8) : ITEM[k].cat === 'bento' ? makeBento(k, 0.7) : ITEM[k].cat === 'steam' ? makeNikuman(k, 0.8) : makeFried(k, 0.7);
       o.position.set((i % 2 - 0.5) * 0.3, (i >> 1) * 0.14 - 0.3, 0);
       hold.add(o);
     });
@@ -691,7 +709,7 @@ backDoorTag.hover = true;
 backDoorTag.near = new THREE.Vector3(LAYOUT.backDoor.xc, 0.9, 3.4);
 shelves.forEach((sh) => { sh.tag = new Tag().at(sh.pos.x, 2.5, sh.pos.z); });
 DISPLAYS.forEach((def) => { def.tag = new Tag().at(def.layout.x, def.tagY, def.layout.z); });
-const makerTags = { sand: new Tag().at(LAYOUT.sandTable.x, 2.2, LAYOUT.sandTable.z), fry: new Tag().at(LAYOUT.fryer.x, 2.5, LAYOUT.fryer.z), bento: new Tag().at(LAYOUT.bentoTable.x, 2.2, LAYOUT.bentoTable.z) };
+const makerTags = { sand: new Tag().at(LAYOUT.sandTable.x, 2.2, LAYOUT.sandTable.z), fry: new Tag().at(LAYOUT.fryer.x, 2.5, LAYOUT.fryer.z), steam: new Tag().at(LAYOUT.steamTable.x, 2.2, LAYOUT.steamTable.z), bento: new Tag().at(LAYOUT.bentoTable.x, 2.2, LAYOUT.bentoTable.z) };
 // 握りモードで見えるラベル
 // 握り台の向きに合わせた座標変換（lx=台の長さ方向, lz=手前=お客さん側）。台を動かすと LAYOUT.station が変わる
 const sl = (lx, ly, lz) => {
@@ -743,6 +761,10 @@ function onLevelUp() {
     10: 'Lv.10！ のり弁当とチョコレートが登場。チョコを注文しよう',
     11: 'Lv.11！ スイーツが登場。売り場にスイーツケースができた。プリンを注文しよう',
     12: 'Lv.12！ シュークリームが登場。注文しよう',
+    13: 'Lv.13！ 肉まんが登場。バックヤードに蒸し器台、売り場に中華まんケースができた。冷凍肉まんを注文しよう',
+    14: 'Lv.14！ たばこが登場。奥の壁ぎわにタバコ棚ができた。たばこ（赤）を注文しよう',
+    15: 'Lv.15！ あんまんが登場。冷凍あんまんを注文しよう',
+    16: 'Lv.16！ たばこ（緑）が登場。注文しよう',
   }[S.level];
   if (msg) toast(msg, 6000);
   applyUnlocks();
@@ -1185,7 +1207,7 @@ function updateMakers(dt) {
     else if (m.out.length) tag.set({ chip: `${ITEM[m.out[0]].name} ×${m.out.length} できた！`, tone: 'good' });
     else tag.set({ chip: `${m.icon} ${m.name}` });
   });
-  fryerModel.animate(elapsed, makers.fry.state === 'making');
+  Object.values(makers).forEach((m) => { if (m.model.animate) m.model.animate(elapsed, m.state === 'making'); });
 }
 
 /* =====================================================================
@@ -1687,7 +1709,7 @@ function chooseFrom(ids, n) {
   }
   return out;
 }
-const STOP_ORDER = ['shelf', 'sand', 'bento', 'hot', 'snack', 'sweet', 'fridge']; // 店内をまわる順
+const STOP_ORDER = ['shelf', 'sand', 'bento', 'hot', 'steam', 'snack', 'sweet', 'fridge', 'tobacco']; // 店内をまわる順
 const STOP_CAT = { shelf: 'onigiri', ...Object.fromEntries(DISPLAYS.map((def) => [def.stop, def.cat])) };
 
 class Customer {
@@ -3428,9 +3450,9 @@ addItem({
   },
 });
 shelves.forEach((sh) => addItem({ id: 'shelf' + sh.i, name: 'おにぎりの棚', L: sh.pos, box: 'shelf', group: sh.model.group, station: 'shelf' + sh.i, lv: 1, tags: [[sh.tag, 2.5]] }));
-const MAKER_ITEM = { sand: ['sandTable', 'サンドイッチ台'], fry: ['fryer', '揚げ物台'], bento: ['bentoTable', '弁当台'] };
+const MAKER_ITEM = { sand: ['sandTable', 'サンドイッチ台'], fry: ['fryer', '揚げ物台'], bento: ['bentoTable', '弁当台'], steam: ['steamTable', '蒸し器台'] };
 Object.values(makers).forEach((mk) => addItem({ id: mk.id + 'Table', name: MAKER_ITEM[mk.id][1], L: LAYOUT[MAKER_ITEM[mk.id][0]], box: mk.id, group: mk.model.group, station: mk.id, lv: mk.lv, tags: [[makerTags[mk.id], 2.2]] }));
-const DISP_NAME = { fridge: '飲み物の冷蔵庫', sandcase: 'サンドのケース', hotcase: 'ホットスナックケース', snackrack: 'お菓子棚', bentocase: 'お弁当ケース', sweetcase: 'スイーツケース' };
+const DISP_NAME = { fridge: '飲み物の冷蔵庫', sandcase: 'サンドのケース', hotcase: 'ホットスナックケース', snackrack: 'お菓子棚', bentocase: 'お弁当ケース', sweetcase: 'スイーツケース', steamcase: '中華まんケース', tobaccorack: 'タバコ棚' };
 DISPLAYS.forEach((def) => addItem({ id: def.id, name: DISP_NAME[def.id], L: def.layout, box: def.id, group: def.d.model.group, station: def.id, lv: def.lv, exp: true, tags: [[def.tag, def.tagY]] }));
 
 /** 設備のラベルは、カーソルが設備の近くに来たときだけ出す（近さの基準＝設備の中心） */
