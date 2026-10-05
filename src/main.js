@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {
-  LAYOUT, COLLIDERS, EXP_COLLIDERS, ITEM_BOXES, KIND_IDS, bx, cy, sp,
+  LAYOUT, COLLIDERS, EXP_COLLIDERS, ITEM_BOXES, EXP_WIDTH, KIND_IDS, bx, cy, sp,
   makeOnigiri, makeSandwich, makeFried, makeBento, makePerson, makeRobot, buildCharger, buildShelf, buildCooker, buildStation, buildTrayStand, buildRegister, buildDoor, buildBackDoor, buildFridge, buildDisplayCase, buildSandTable, buildFryer, buildBentoTable, buildExpansion, buildWorld,
 } from './models.js';
 
@@ -124,6 +124,7 @@ const defaultState = () => ({
   chargers: 0, // 買った充電スポットの数
   tiers: ['shio', 'shio', 'shio', 'shio'], // 棚の各段（上から）に置くおにぎり
   layout: {}, // 動かした設備の位置 { id: { x, z, rot } }
+  size: 0, // 店の広さ（増築した回数）
   stats: { sales: 0, customers: 0, lost: 0 },
 });
 let S = defaultState();
@@ -142,6 +143,7 @@ function readSlot(n) {
         stats: { ...d.stats, ...j.s.stats }, pending: Array.isArray(j.s.pending) ? j.s.pending : [], opened: false,
         // 以前の「レジ係を雇う」アップグレードは、アルバイト（レジ係）に引き継ぐ
         staff: { ...(j.s.staff || {}), cashier: !!((j.s.staff && j.s.staff.cashier) || (j.s.up && j.s.up.cashier > 0)) },
+        size: typeof j.s.size === 'number' ? j.s.size : ((j.s.level || 1) >= 3 ? 1 : 0), // 以前はLv.3で自動増築
         robLv: { ...(j.s.robLv || {}) },
         // 以前のアルバイトはロボットに引き継ぐ（充電スポットを1つ進呈）
         chargers: typeof j.s.chargers === 'number' ? j.s.chargers : (Object.values(j.s.staff || {}).some(Boolean) ? 1 : 0),
@@ -188,11 +190,19 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(30, 1, 1, 300);
 const view = { az: rad(40), el: rad(41), dist: 27, target: new THREE.Vector3(LAYOUT.view.x, 0.3, LAYOUT.view.z) };
 let userZoomed = false;
-let expanded = false; // Lv.3 の増築済みか
+let shopSize = 0; // 店の広さ（0=最初 / 1〜4=増築ずみの回数）。1回ごとに右へ 2.5m
+let expanded = false; // 1回以上増築しているか
+const SIZE_UP = [ // 増築 n 回目に必要なレベルと費用
+  { lv: 3, cost: 3000 }, { lv: 6, cost: 8000 }, { lv: 10, cost: 18000 }, { lv: 14, cost: 40000 },
+];
+const SHOP_XMAX = (n = shopSize) => 3.5 + EXP_WIDTH * n; // 店の右端
+const SIZE_VIEW_X = [-3.6, -2.9, -1.8, -0.7, 0.4]; // 広さごとの画面の中心
+const SIZE_VIEW_D = [1, 1.1, 1.22, 1.34, 1.46]; // 広さごとのカメラの距離
+const SIZE_WIPE_D = [35, 38, 41, 44, 47];
 function defaultDist() {
   const a = window.innerWidth / window.innerHeight;
   const base = !(a > 0) || a >= 1.75 ? 30.5 : 30.5 * Math.min(1.75 / a, 1.8);
-  return base * (expanded ? 1.1 : 1);
+  return base * SIZE_VIEW_D[shopSize];
 }
 view.dist = defaultDist();
 function updateCamera() {
@@ -350,10 +360,14 @@ function shelfAdd(sh, k, n) {
 function refreshShelf(sh) { sh.model.setTiers(sh.tiers); }
 
 // Lv.3：店が右に広がる（増築）。飲み物の冷蔵庫、Lv.4 サンドの売り場、Lv.5 ホットスナックケースが増築エリアに並ぶ
-const expansion = buildExpansion();
-expansion.group.visible = false;
-scene.add(expansion.group);
+const expansions = [1, 2, 3, 4].map((seg) => {
+  const e = buildExpansion(seg);
+  e.group.visible = false;
+  scene.add(e.group);
+  return e;
+});
 let expandT = 1;
+let expandSeg = 0; // いま広がるアニメーション中の増築
 /** 売り場ケース：種類ごとの在庫を持ち、並べる・取る・数えるができる */
 class Display {
   constructor(id, kinds, cap, model, layout) {
@@ -602,6 +616,10 @@ class Tag {
     this.on = true;
     this.empty = true;
     this.key = null;
+    this.spec = null;
+    this.hover = false; // true なら、カーソルが近いときだけ表示（俯瞰のとき）
+    this.near = null; // 近さを測る位置（無ければラベルの位置）
+    this.force = false; // true なら、いつでも表示
     this.cw = 1;
     this.ch = 1;
     allTags.add(this);
@@ -610,6 +628,7 @@ class Tag {
     const key = spec ? JSON.stringify(spec) : '';
     if (key === this.key) return this;
     this.key = key;
+    this.spec = spec;
     if (!spec || (!spec.emo && !spec.chip && !spec.pop && spec.bar === undefined)) { this.empty = true; return this; }
     this.empty = false;
     drawTag(this, spec);
@@ -624,10 +643,20 @@ class Tag {
   }
 }
 /** 描画パスごとに、表示するラベルとサイズ（画面上の px 固定）を決める */
+const NEAR_PX = 100; // カーソルがこの距離(px)以内に来たらラベルを出す
+const _tv = new THREE.Vector3();
 function updateTags(mode, cam, vh, scale = 1) {
   const k = ((2 * Math.tan(rad(cam.fov / 2))) / Math.max(1, vh)) * scale;
+  const W = Math.max(1, window.innerWidth), H = Math.max(1, window.innerHeight);
+  const mx = (mouse.x * 0.5 + 0.5) * W, my = (-mouse.y * 0.5 + 0.5) * H;
+  const nearOnly = mode === 'world' && scale === 1; // 小さなワイプでは全部出す
   for (const t of allTags) {
-    const vis = t.mode === mode && t.on && !t.empty && (!tagsMuted || t.edit);
+    let vis = t.mode === mode && t.on && !t.empty && (!tagsMuted || t.edit);
+    if (vis && nearOnly && t.hover && !t.force && !(t.spec && t.spec.tone === 'warn')) {
+      _tv.copy(t.near || t.pos).project(cam);
+      const dx = (_tv.x * 0.5 + 0.5) * W - mx, dy = (-_tv.y * 0.5 + 0.5) * H - my;
+      vis = _tv.z < 1 && dx * dx + dy * dy < NEAR_PX * NEAR_PX;
+    }
     t.sprite.visible = vis;
     if (!vis) continue;
     t.sprite.position.copy(t.pos);
@@ -656,6 +685,8 @@ const stationTag = new Tag().at(LAYOUT.station.x, 2.2, LAYOUT.station.z);
 const trayTag = new Tag().at(LAYOUT.tray.x, 2.2, LAYOUT.tray.z);
 const regTag = new Tag().at(LAYOUT.register.x, 2.1, LAYOUT.register.z - 0.2);
 const backDoorTag = new Tag().at(LAYOUT.backDoor.xc, 2.6, 3.5);
+backDoorTag.hover = true;
+backDoorTag.near = new THREE.Vector3(LAYOUT.backDoor.xc, 0.9, 3.4);
 shelves.forEach((sh) => { sh.tag = new Tag().at(sh.pos.x, 2.5, sh.pos.z); });
 DISPLAYS.forEach((def) => { def.tag = new Tag().at(def.layout.x, def.tagY, def.layout.z); });
 const makerTags = { sand: new Tag().at(LAYOUT.sandTable.x, 2.2, LAYOUT.sandTable.z), fry: new Tag().at(LAYOUT.fryer.x, 2.5, LAYOUT.fryer.z), bento: new Tag().at(LAYOUT.bentoTable.x, 2.2, LAYOUT.bentoTable.z) };
@@ -700,7 +731,7 @@ function onLevelUp() {
   stationModel.setBowls(S.level);
   const msg = {
     2: 'Lv.2！ 梅むすび・おかかむすびが作れるように。裏口から食材を注文しよう',
-    3: 'Lv.3！ 店が広がって、飲み物の冷蔵庫ができた。裏口から水を注文しよう',
+    3: 'Lv.3！ ショップで「店の広さ」を買えるようになった。広げると飲み物の冷蔵庫が置ける。裏口から水も注文しよう',
     4: 'Lv.4！ サンドイッチ解禁。バックヤードにサンドイッチ台、売り場にサンドのケースができた。食パンとたまごを注文しよう',
     5: 'Lv.5！ から揚げ・お茶が登場。揚げ物台とホットスナックケースができた。鶏肉とお茶を注文しよう',
     6: 'Lv.6！ ハムサンドが作れるように。ハムを注文しよう',
@@ -712,7 +743,6 @@ function onLevelUp() {
     12: 'Lv.12！ シュークリームが登場。注文しよう',
   }[S.level];
   if (msg) toast(msg, 6000);
-  if (S.level >= 3) setExpanded(true, true);
   applyUnlocks();
   orderDirty = true;
 }
@@ -727,18 +757,24 @@ function applyUnlocks() {
   rebuildColliders();
 }
 /** 増築：店を右に広げる（床・壁の追加、当たり判定、カメラ位置） */
-function setExpanded(on, animate) {
-  if (on === expanded) return;
-  expanded = on;
-  expansion.group.visible = on;
-  world.curbRight.visible = !on;
-  if (on && animate) { expandT = 0; } else expandT = 1;
-  expansion.group.scale.y = on && animate ? 0.01 : 1;
+function setShopSize(n, animate) {
+  if (n === shopSize && expansions.every((e, i) => e.group.visible === (i < n))) return;
+  const grew = n > shopSize;
+  shopSize = n;
+  expanded = n >= 1;
+  world.curbRight.visible = n === 0;
+  expansions.forEach((e, i) => {
+    e.group.visible = i < n;
+    e.curb.visible = i === n - 1; // いちばん右の増築だけ、右の縁を残す
+    e.group.scale.y = 1;
+  });
+  expandSeg = grew && animate ? n : 0;
+  if (expandSeg) { expandT = 0; expansions[n - 1].group.scale.y = 0.01; } else expandT = 1;
   applyUnlocks();
 }
 function placeWipeCam() {
-  const tx = expanded ? -2.9 : LAYOUT.view.x;
-  const d = expanded ? 38 : 35;
+  const tx = SIZE_VIEW_X[shopSize];
+  const d = SIZE_WIPE_D[shopSize];
   wipeCam.position.set(tx + d * Math.cos(rad(41)) * Math.sin(rad(40)), 0.3 + d * Math.sin(rad(41)), LAYOUT.view.z + d * Math.cos(rad(41)) * Math.cos(rad(40)));
   wipeCam.lookAt(tx, 0.3, LAYOUT.view.z);
 }
@@ -746,7 +782,7 @@ function placeWipeCam() {
 /* =====================================================================
  *  当たり判定 / 経路探索
  * ===================================================================== */
-const NAV = { x0: -6.575, x1: 5.65, z0: -8.1, z1: 3.65, cs: 0.25 };
+const NAV = { x0: -6.575, x1: 13.7, z0: -8.1, z1: 3.65, cs: 0.25 };
 NAV.nx = Math.floor((NAV.x1 - NAV.x0) / NAV.cs) + 1;
 NAV.nz = Math.floor((NAV.z1 - NAV.z0) / NAV.cs) + 1;
 let colliders = [];
@@ -758,7 +794,7 @@ function distToBox(x, z, b) {
 function rebuildColliders() {
   colliders = [...COLLIDERS];
   if (expanded) colliders.push(...EXP_COLLIDERS);
-  else colliders.push({ x0: 3.5, x1: 9, z0: -7, z1: 6 }); // 増築前は右側に出られない
+  colliders.push({ x0: SHOP_XMAX(), x1: 30, z0: -9, z1: 6 }); // 店の外（右側）には出られない
   ITEMS.forEach((it) => { if (itemActive(it)) colliders.push(footBox(it, it.L.x, it.L.z, it.L.rot)); });
   fillBlocked(blocked, colliders);
   workers.forEach((w) => { w.home = freeNear(WORKER_HOME[w.role]); });
@@ -2045,6 +2081,8 @@ const chargerModels = CHARGER_SPOTS.map((p) => {
   return c;
 });
 const cashierTag = new Tag().at(LAYOUT.register.staff.x, 1.75, LAYOUT.register.staff.z);
+cashierTag.hover = true;
+cashierTag.near = staff.group.position;
 /** 動き回るロボット。やることを「手順（行く・する・待つ）」の列にして、順に実行する */
 class Worker {
   constructor(role) {
@@ -2069,6 +2107,8 @@ class Worker {
     this.pad = -1;
     this.spd = 1;
     this.tag = new Tag().set({ chip: ROLES[role].name });
+    this.tag.hover = true;
+    this.tag.near = this.pos;
   }
   refreshHold() {
     const c = this.carry;
@@ -2369,11 +2409,26 @@ function applyUpgrades() {
   });
   syncWorkers();
   stationModel.setBowls(S.level);
-  setExpanded(S.level >= 3, false);
+  setShopSize(S.size || 0, false);
   DISPLAYS.forEach((def) => def.d.refresh());
   applyUnlocks();
   placeWipeCam();
   shopDirty = orderDirty = true;
+}
+function buyShopSize() {
+  const n = shopSize;
+  if (n >= SIZE_UP.length) return;
+  const u = SIZE_UP[n];
+  if (S.level < u.lv) return rest(`Lv.${u.lv} から広げられるよ`);
+  if (S.money < u.cost) return rest('お金が足りない…');
+  S.money -= u.cost;
+  S.size = n + 1;
+  setShopSize(S.size, true);
+  placeWipeCam();
+  toast(n === 0 ? '店が広がった！ 飲み物の冷蔵庫などが置けるようになった' : '店がさらに広がった！ レイアウト編集で設備を動かそう', 4000);
+  popup(player.pos.x, 2.2, player.pos.z, `−${yen(u.cost)}`, 'red');
+  save();
+  shopDirty = true;
 }
 function purchase(id) {
   const u = UPG_BY_ID[id];
@@ -2390,6 +2445,13 @@ function purchase(id) {
 }
 function renderShop() {
   let h = '<h2>🛒 ショップ</h2>';
+  {
+    const n = shopSize, maxed = n >= SIZE_UP.length, nx = SIZE_UP[n];
+    const locked = !maxed && S.level < nx.lv;
+    h += `<div class="up"><div class="t"><div class="n">🏠 店の広さ <span class="lv">${maxed ? 'MAX ' : ''}広さ ${n + 1} / ${SIZE_UP.length + 1}</span></div>
+      <div class="d">店を右へ 2.5m 広げる（いまの横幅 ${(SHOP_XMAX() + 7).toFixed(1)}m）${maxed ? '' : locked ? `<br>🔒 Lv.${nx.lv} から` : ''}</div></div>
+      <button class="btn green" data-size="1" ${maxed || locked || S.money < nx.cost ? 'disabled' : ''}>${maxed ? '最大' : locked ? '未解禁' : yen(nx.cost)}</button></div>`;
+  }
   for (const u of UPG) {
     const lv = S.up[u.id];
     const maxed = lv >= u.costs.length;
@@ -2439,6 +2501,7 @@ $('shop').addEventListener('click', (e) => {
   const b = e.target.closest('button');
   if (!b) return;
   if (b.dataset.id) purchase(b.dataset.id);
+  else if (b.dataset.size) buyShopSize();
   else if (b.dataset.buy) buyRobot(b.dataset.buy);
   else if (b.dataset.rup) upgradeRobot(b.dataset.rup);
   else if (b.dataset.charger) buyCharger();
@@ -2624,7 +2687,7 @@ canvas.addEventListener('pointerdown', (e) => {
     return;
   }
   if (raycaster.ray.intersectPlane(groundPlane, _hit)) {
-    if (_hit.x > -7 && _hit.x < (expanded ? 6.0 : 3.5) && _hit.z > -8.5 && _hit.z < 4) {
+    if (_hit.x > -7 && _hit.x < SHOP_XMAX() && _hit.z > -8.5 && _hit.z < 4) {
       player.path = findPath(player.pos.x, player.pos.z, _hit.x, _hit.z);
       player.target = null;
       showClickMark(_hit.x, _hit.z);
@@ -2757,7 +2820,7 @@ function updateWorld(dt) {
   updateWorkers(dt);
   if (expandT < 1) {
     expandT = Math.min(1, expandT + dt / 1.0);
-    expansion.group.scale.y = Math.max(0.01, ease(expandT));
+    if (expandSeg) expansions[expandSeg - 1].group.scale.y = Math.max(0.01, ease(expandT));
     if (expandT >= 1) placeWipeCam();
   }
 
@@ -2934,6 +2997,8 @@ function addItem(o) {
   };
   o.group.userData.editItem = it;
   ITEMS.push(it);
+  it.tags.forEach(([tag]) => { tag.hover = true; tag.near = new THREE.Vector3(); });
+  syncTagNear(it);
   return it;
 }
 const regL = LAYOUT.register;
@@ -2965,6 +3030,11 @@ Object.values(makers).forEach((mk) => addItem({ id: mk.id + 'Table', name: MAKER
 const DISP_NAME = { fridge: '飲み物の冷蔵庫', sandcase: 'サンドのケース', hotcase: 'ホットスナックケース', snackrack: 'お菓子棚', bentocase: 'お弁当ケース', sweetcase: 'スイーツケース' };
 DISPLAYS.forEach((def) => addItem({ id: def.id, name: DISP_NAME[def.id], L: def.layout, box: def.id, group: def.d.model.group, station: def.id, lv: def.lv, exp: true, tags: [[def.tag, def.tagY]] }));
 
+/** 設備のラベルは、カーソルが設備の近くに来たときだけ出す（近さの基準＝設備の中心） */
+function syncTagNear(it) {
+  const o = rotXZ(it.foot.ox, it.foot.oz, it.L.rot);
+  it.tags.forEach(([tag]) => tag.near.set(it.L.x + o.x, 0.9, it.L.z + o.z));
+}
 const itemActive = (it) => S.level >= it.lv && (!it.exp || expanded);
 function footBox(it, x, z, rot) {
   const o = rotXZ(it.foot.ox, it.foot.oz, rot);
@@ -2985,6 +3055,7 @@ function applyItem(it) {
   const st = stations.find((s) => s.id === it.station);
   if (st) { st.use.set(L.use.x, 0, L.use.z); st.marker.position.copy(st.use); }
   it.tags.forEach(([tag, y]) => tag.at(L.x, y, L.z));
+  syncTagNear(it);
   if (it.after) it.after();
 }
 function setItemPose(it, x, z, rot) {
@@ -3017,7 +3088,7 @@ const trialBlocked = new Uint8Array(NAV.nx * NAV.nz);
 const cellOf = (x, z) => [clamp(Math.round((x - NAV.x0) / NAV.cs), 0, NAV.nx - 1), clamp(Math.round((z - NAV.z0) / NAV.cs), 0, NAV.nz - 1)];
 function placementCheck(it, x, z, rot) {
   const box = footBox(it, x, z, rot);
-  const xMax = expanded ? 6.0 : 3.5;
+  const xMax = SHOP_XMAX();
   if (box.x0 < -7 - 1e-6 || box.x1 > xMax + 1e-6 || box.z0 < -8.5 - 1e-6 || box.z1 > 4.0 + 1e-6) return { ok: false, reason: '店の外には置けない' };
   const fixed = [...COLLIDERS, ...(expanded ? EXP_COLLIDERS : [])];
   if (fixed.some((b) => overlap(box, b))) return { ok: false, reason: '壁や飾りとかぶっている' };
@@ -3027,7 +3098,7 @@ function placementCheck(it, x, z, rot) {
   if (others.some((o) => overlap(box, footBox(o, o.L.x, o.L.z, o.L.rot)))) return { ok: false, reason: '他の設備とかぶっている' };
   // 通路：入口から、すべての設備の操作位置まで歩いて行けるか
   const boxes = [...COLLIDERS, ...(expanded ? EXP_COLLIDERS : []), box];
-  if (!expanded) boxes.push({ x0: 3.5, x1: 9, z0: -7, z1: 6 });
+  boxes.push({ x0: SHOP_XMAX(), x1: 30, z0: -9, z1: 6 });
   others.forEach((o) => { if (itemActive(o)) boxes.push(footBox(o, o.L.x, o.L.z, o.L.rot)); });
   fillBlocked(trialBlocked, boxes);
   const useP = (o, X, Z, R) => { const u = rotXZ(o.useLocal.x, o.useLocal.z, R); return { x: X + u.x, z: Z + u.z }; };
@@ -3088,8 +3159,8 @@ scene.add(editGroup);
     return l;
   };
   edit.gridMain = mk(-7, 3.5);
-  edit.gridExp = mk(3.5, 6.0);
-  editGroup.add(edit.gridMain, edit.gridExp);
+  edit.gridExps = [1, 2, 3, 4].map((n) => mk(3.5 + EXP_WIDTH * (n - 1), 3.5 + EXP_WIDTH * n));
+  editGroup.add(edit.gridMain, ...edit.gridExps);
 }
 ITEMS.forEach((it) => {
   const g = new THREE.Group();
@@ -3117,6 +3188,8 @@ ITEMS.forEach((it) => {
   editGroup.add(g);
   const tag = new Tag();
   tag.edit = true;
+  tag.hover = true;
+  tag.near = new THREE.Vector3();
   tag.on = false;
   edit.markers.push({ it, g, plane, front, frameMat, tag });
 });
@@ -3137,7 +3210,10 @@ function updateMarker(mk, state) {
   frameMat.color.set(state === 'sel' ? c : state === 'hover' ? cols.hover : locked ? '#8c99a2' : '#2f7ff0');
   front.material.color.set(locked && state === 'normal' ? '#8c99a2' : '#1b2a35');
   const lvTxt = locked ? `（Lv.${it.lv}で解禁）` : '';
-  tag.at(L.x + rotXZ(it.foot.ox, it.foot.oz, L.rot).x, 1.6, L.z + rotXZ(it.foot.ox, it.foot.oz, L.rot).z);
+  const fo = rotXZ(it.foot.ox, it.foot.oz, L.rot);
+  tag.at(L.x + fo.x, 1.6, L.z + fo.z);
+  tag.near.set(L.x + fo.x, 0.4, L.z + fo.z);
+  tag.force = state === 'sel' || state === 'hover';
   tag.set({ chip: it.name + lvTxt, tone: state === 'sel' ? (edit.check.ok ? 'good' : 'warn') : '' });
 }
 const canEdit = () => started && !S.opened && customers.length === 0 && couriers.length === 0 && !craft.active && !shelfMode.active && !paused;
@@ -3161,7 +3237,7 @@ function enterEdit() {
   tagsMuted = true;
   allTags.forEach((t) => { if (!t.edit) { t.wasOn = t.on; t.on = false; } }); // 通常のラベルは編集中は隠す
   editGroup.visible = true;
-  edit.gridExp.visible = expanded;
+  edit.gridExps.forEach((gr, i) => { gr.visible = i < shopSize; });
   edit.markers.forEach((mk) => { mk.tag.on = true; });
   stations.forEach((st) => { st.marker.userData.wasVisible = st.marker.visible; st.marker.visible = false; });
   document.body.classList.add('editing');
@@ -3303,7 +3379,7 @@ function editEscape() {
   if (edit.sel) { cancelSel(); renderEditBar(); } else exitEdit();
 }
 function updateEdit() {
-  edit.gridExp.visible = expanded;
+  edit.gridExps.forEach((gr, i) => { gr.visible = i < shopSize; });
   if (edit.sel) followMouse();
   else edit.hover = editItemAt();
   edit.markers.forEach((mk) => updateMarker(mk, mk.it === edit.sel ? 'sel' : mk.it === edit.hover ? 'hover' : 'normal'));
@@ -3365,7 +3441,7 @@ function frame(dt) {
   if (started && edit.on) { // レイアウト編集中も時間を止める（カメラとマウスだけ動く）
     updateEdit();
     updateClock();
-    view.target.x += ((expanded ? -2.9 : LAYOUT.view.x) - view.target.x) * (1 - Math.exp(-3 * dt));
+    view.target.x += (SIZE_VIEW_X[shopSize] - view.target.x) * (1 - Math.exp(-3 * dt));
     if (!userZoomed) view.dist += (defaultDist() - view.dist) * (1 - Math.exp(-3 * dt));
     updateCamera();
     render();
@@ -3398,7 +3474,7 @@ function frame(dt) {
   saveT += dt;
   if (saveT > 20) { saveT = 0; save(); }
   // 増築したら、画面の中心と距離をなめらかに調整
-  view.target.x += ((expanded ? -2.9 : LAYOUT.view.x) - view.target.x) * (1 - Math.exp(-3 * dt));
+  view.target.x += (SIZE_VIEW_X[shopSize] - view.target.x) * (1 - Math.exp(-3 * dt));
   if (!userZoomed) view.dist += (defaultDist() - view.dist) * (1 - Math.exp(-3 * dt));
   updateCamera();
   render();

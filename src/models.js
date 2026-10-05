@@ -1220,40 +1220,51 @@ export function buildBentoTable(len = 1.6) {
   };
 }
 
-/* ---------- 増築（Lv.3）：売場が右に広がる ---------- */
-export function buildExpansion() {
+/* ---------- 増築：売場が右に 2.5m ずつ広がる（seg=1,2,3,4） ---------- */
+export const EXP_WIDTH = 2.5;
+const EXP_POSTERS = [
+  ['冷たい水あります', '#e8f4ff', '#2f7ff0'],
+  ['あったか おでん…!?', '#fff2dc', '#d6453d'],
+  ['スイーツ 新登場', '#ffe8f0', '#e8688a'],
+  ['いつもありがとう', '#f3efe4', '#1fa463'],
+];
+export function buildExpansion(seg = 1) {
   const g = new THREE.Group();
-  const x0 = B.x1, x1 = 6.0; // 3.5 → 6.0
+  const x0 = B.x1 + EXP_WIDTH * (seg - 1), x1 = x0 + EXP_WIDTH;
   const w = x1 - x0;
   const cx = (x0 + x1) / 2;
   const SD = SLAB.z1 - SLAB.z0;
-  // 土台・床
-  const slab = new THREE.Mesh(new RoundedBoxGeometry(2.6, 0.7, SD, 2, 0.1), M('#7f8f9c'));
-  slab.position.set(5.4, -0.35, (SLAB.z0 + SLAB.z1) / 2);
+  // 土台・床（手前の歩道もつなげる）
+  const s0 = seg === 1 ? 4.1 : x0 + 0.7, s1 = x1 + 0.7;
+  const slab = new THREE.Mesh(new RoundedBoxGeometry(s1 - s0, 0.7, SD, 2, 0.1), M('#7f8f9c'));
+  slab.position.set((s0 + s1) / 2, -0.35, (SLAB.z0 + SLAB.z1) / 2);
   g.add(slab);
-  floorPlane(g, 4.1, 6.7, SLAB.z0, SLAB.z1, 0.005, tileTex('#d4d7da', '#c8ccd0', '#b9bec3', 2.6, SD));
+  floorPlane(g, s0, s1, SLAB.z0, SLAB.z1, 0.005, tileTex('#d4d7da', '#c8ccd0', '#b9bec3', s1 - s0, SD));
   floorPlane(g, x0, x1, B.z0, B.z1, 0.012, tileTex('#f7f5ee', '#e9ece8', '#d3d8d6', w, B.z1 - B.z0));
   // 奥の壁・ストライプ
   bx(g, [w + 0.15, 3.0, 0.3], '#f3efe4', [x0 + 0.15 + w / 2 - 0.075, 0, B.z0], { r: 0.02 });
   bx(g, [w + 0.15, 0.9, 0.31], '#cdd5da', [x0 + 0.15 + w / 2 - 0.075, 0, B.z0], { r: 0.02 });
   ['#1fa463', '#2f7ff0', '#ff8a2a'].forEach((c, i) => bx(g, [w - 0.1, 0.1, 0.02], c, [cx, 2.45 - i * 0.14, B.z0 + 0.16], { r: 0.003 }));
-  // 右・手前の低い縁
-  bx(g, [0.25, 0.4, B.z1 - B.z0 + 0.3], '#eceff1', [x1, 0, (B.z0 + B.z1) / 2], { r: 0.03 });
+  // 右・手前の低い縁（右の縁は、さらに広げたら隠す）
+  const curb = bx(g, [0.25, 0.4, B.z1 - B.z0 + 0.3], '#eceff1', [x1, 0, (B.z0 + B.z1) / 2], { r: 0.03 });
   bx(g, [w + 0.1, 0.4, 0.25], '#eceff1', [cx + 0.05, 0, B.z1], { r: 0.03 });
   // 奥の壁のポスター
-  plane(g, 1.2, 0.8, signTex('冷たい水あります', '#e8f4ff', '#2f7ff0', 512, 340, 'bold 52px "Yu Gothic UI","Meiryo",sans-serif'), [3.1, 1.9, B.z0 + 0.16]);
-  // バックヤード：飲み物のケース
-  for (let l = 0; l < 2; l++)
-    for (let c = 0; c < 2; c++) {
-      const x = -2.98, z = -7.9 + c * 0.7;
-      bx(g, [0.64, 0.34, 0.44], '#2f7ff0', [x, l * 0.34, z], { r: 0.03 });
-      bx(g, [0.02, 0.1, 0.34], '#ffffff', [x + 0.325, l * 0.34 + 0.12, z], { r: 0.004 });
-      for (let b = 0; b < 3; b++) cy(g, 0.04, 0.04, 0.1, '#bfe6ff', [x - 0.18 + b * 0.18, l * 0.34 + 0.34, z], 12);
-    }
+  const po = EXP_POSTERS[(seg - 1) % EXP_POSTERS.length];
+  plane(g, 1.2, 0.8, signTex(po[0], po[1], po[2], 512, 340, 'bold 52px "Yu Gothic UI","Meiryo",sans-serif'), [cx - 0.15, 1.9, B.z0 + 0.16]);
+  // バックヤード：飲み物のケース（最初の増築のとき）
+  if (seg === 1) {
+    for (let l = 0; l < 2; l++)
+      for (let c = 0; c < 2; c++) {
+        const x = -2.98, z = -7.9 + c * 0.7;
+        bx(g, [0.64, 0.34, 0.44], '#2f7ff0', [x, l * 0.34, z], { r: 0.03 });
+        bx(g, [0.02, 0.1, 0.34], '#ffffff', [x + 0.325, l * 0.34 + 0.12, z], { r: 0.004 });
+        for (let b = 0; b < 3; b++) cy(g, 0.04, 0.04, 0.1, '#bfe6ff', [x - 0.18 + b * 0.18, l * 0.34 + 0.34, z], 12);
+      }
+  }
   g.traverse((o) => {
     if (o.isMesh && !o.userData.noShadow) { o.castShadow = true; o.receiveShadow = true; }
   });
-  return { group: g };
+  return { group: g, curb };
 }
 
 /* ---------- 店舗・背景まるごと ---------- */
