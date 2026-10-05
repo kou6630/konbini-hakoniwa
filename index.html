@@ -55,6 +55,24 @@
   #exp-track { height:9px; margin-top:5px; border-radius:6px; background:#dbe5ec; overflow:hidden; }
   #exp-bar { height:100%; width:0; border-radius:6px; background:linear-gradient(90deg,#4aa3ff,#2f7ff0); transition:width .25s; }
 
+  #clock { padding:8px 14px 10px; width:230px; }
+  #clock .r1 { display:flex; justify-content:space-between; align-items:baseline; font-weight:800; gap:8px; }
+  #day-v { font-size:15px; }
+  #time-v { font-size:20px; color:#c47a12; }
+  #state-v { font-size:12px; padding:1px 9px; border-radius:99px; color:#fff; }
+  #state-v.open { background:var(--green); }
+  #state-v.closed { background:#8a98a1; }
+  #clock .r2 { display:flex; flex-direction:column; gap:6px; margin-top:7px; }
+  #clock .btn { padding:6px 10px; font-size:13px; }
+  #editbar { position:fixed; left:50%; top:14px; transform:translateX(-50%); display:none; align-items:center; gap:16px; padding:9px 16px; z-index:6; max-width:calc(100% - 270px); flex-wrap:wrap; justify-content:center; }
+  #editbar .et { font-weight:900; font-size:16px; color:#c47a12; white-space:nowrap; }
+  #editbar .et small { font-size:11px; font-weight:800; color:#6b7c86; margin-left:6px; }
+  #editbar .em { font-size:14px; font-weight:800; }
+  #editbar .em .bad { color:#d23a2c; }
+  #editbar .eb { display:flex; gap:8px; }
+  #editbar .btn { padding:6px 12px; font-size:13px; }
+  body.editing #toast { top:96px; }
+  body.editing #prompt { display:none !important; }
   #prompt { position:fixed; left:50%; bottom:34px; transform:translateX(-50%); padding:10px 22px; font-size:19px; font-weight:900; display:none; }
   #prompt kbd { display:inline-block; min-width:26px; padding:1px 7px; margin-right:8px; border-radius:7px; background:var(--ink); color:#fff; font:inherit; font-size:.85em; text-align:center; }
   #toast { position:fixed; left:50%; top:24px; transform:translateX(-50%); padding:8px 20px; font-weight:800; opacity:0; transition:opacity .25s; pointer-events:none; }
@@ -147,7 +165,12 @@
     <div class="row"><span id="lv-v">Lv.1</span><span id="exp-v">EXP 0 / 40</span></div>
     <div id="exp-track"><div id="exp-bar"></div></div>
   </div>
+  <div id="clock" class="card">
+    <div class="r1"><span id="day-v">1日目</span><span id="time-v">☀ 7:00</span><span id="state-v" class="closed">準備中</span></div>
+    <div class="r2"><button id="btn-open" class="btn green">開店する</button><button id="btn-edit" class="btn sub">🛠 レイアウト編集</button></div>
+  </div>
 </div>
+<div id="editbar" class="card"></div>
 <div id="prompt" class="card"></div>
 <div id="toast" class="card"></div>
 <div id="shop" class="card"></div>

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {
-  LAYOUT, COLLIDERS, SHELF_COLLIDERS, EXP_COLLIDERS, UNLOCK_COLLIDERS, KIND_IDS, bx, cy, sp,
+  LAYOUT, COLLIDERS, EXP_COLLIDERS, ITEM_BOXES, KIND_IDS, bx, cy, sp,
   makeOnigiri, makeSandwich, makeFried, makeBento, makePerson, makeRobot, buildCharger, buildShelf, buildCooker, buildStation, buildTrayStand, buildRegister, buildDoor, buildBackDoor, buildFridge, buildDisplayCase, buildSandTable, buildFryer, buildBentoTable, buildExpansion, buildWorld,
 } from './models.js';
 
@@ -123,6 +123,7 @@ const defaultState = () => ({
   robLv: {}, // ロボットのレベル { role: 0〜4 }
   chargers: 0, // 買った充電スポットの数
   tiers: ['shio', 'shio', 'shio', 'shio'], // 棚の各段（上から）に置くおにぎり
+  layout: {}, // 動かした設備の位置 { id: { x, z, rot } }
   stats: { sales: 0, customers: 0, lost: 0 },
 });
 let S = defaultState();
@@ -626,7 +627,7 @@ class Tag {
 function updateTags(mode, cam, vh, scale = 1) {
   const k = ((2 * Math.tan(rad(cam.fov / 2))) / Math.max(1, vh)) * scale;
   for (const t of allTags) {
-    const vis = t.mode === mode && t.on && !t.empty;
+    const vis = t.mode === mode && t.on && !t.empty && (!tagsMuted || t.edit);
     t.sprite.visible = vis;
     if (!vis) continue;
     t.sprite.position.copy(t.pos);
@@ -659,20 +660,16 @@ shelves.forEach((sh) => { sh.tag = new Tag().at(sh.pos.x, 2.5, sh.pos.z); });
 DISPLAYS.forEach((def) => { def.tag = new Tag().at(def.layout.x, def.tagY, def.layout.z); });
 const makerTags = { sand: new Tag().at(LAYOUT.sandTable.x, 2.2, LAYOUT.sandTable.z), fry: new Tag().at(LAYOUT.fryer.x, 2.5, LAYOUT.fryer.z), bento: new Tag().at(LAYOUT.bentoTable.x, 2.2, LAYOUT.bentoTable.z) };
 // 握りモードで見えるラベル
-const SX = LAYOUT.station.x, SZ = LAYOUT.station.z;
-// 握り台の向きに合わせた座標変換（lx=台の長さ方向, lz=手前=お客さん側）
-const SROT = LAYOUT.station.rot;
-const sl = (lx, ly, lz) => new THREE.Vector3(
-  SX + lx * Math.cos(SROT) + lz * Math.sin(SROT), ly, SZ - lx * Math.sin(SROT) + lz * Math.cos(SROT));
-const fpsTags = {
-  rice: new Tag('fps').at(...sl(-0.62, 1.5, 0.15).toArray()),
-  salt: new Tag('fps').at(...sl(0.0, 1.3, -0.33).toArray()),
-  ume: new Tag('fps').at(...sl(0.38, 1.3, -0.33).toArray()),
-  okaka: new Tag('fps').at(...sl(0.76, 1.3, -0.33).toArray()),
-  sake: new Tag('fps').at(...sl(0.2, 1.72, -0.42).toArray()),
-  tuna: new Tag('fps').at(...sl(0.65, 1.72, -0.42).toArray()),
-  tray: new Tag('fps').at(...sl(1.55, 1.4, 0).toArray()),
+// 握り台の向きに合わせた座標変換（lx=台の長さ方向, lz=手前=お客さん側）。台を動かすと LAYOUT.station が変わる
+const sl = (lx, ly, lz) => {
+  const L = LAYOUT.station, r = L.rot;
+  return new THREE.Vector3(L.x + lx * Math.cos(r) + lz * Math.sin(r), ly, L.z - lx * Math.sin(r) + lz * Math.cos(r));
 };
+const FPS_TAG_AT = {
+  rice: [-0.62, 1.5, 0.15], salt: [0.0, 1.3, -0.33], ume: [0.38, 1.3, -0.33], okaka: [0.76, 1.3, -0.33],
+  sake: [0.2, 1.72, -0.42], tuna: [0.65, 1.72, -0.42], tray: [1.55, 1.4, 0],
+};
+const fpsTags = Object.fromEntries(Object.entries(FPS_TAG_AT).map(([k, a]) => [k, new Tag('fps').at(...sl(...a).toArray())]));
 
 let toastTimer = 0;
 function toast(msg, ms = 2000) {
@@ -759,19 +756,40 @@ function distToBox(x, z, b) {
   return Math.hypot(dx, dz);
 }
 function rebuildColliders() {
-  colliders = [...COLLIDERS, ...SHELF_COLLIDERS];
+  colliders = [...COLLIDERS];
   if (expanded) colliders.push(...EXP_COLLIDERS);
   else colliders.push({ x0: 3.5, x1: 9, z0: -7, z1: 6 }); // 増築前は右側に出られない
-  if (S.level >= 4) colliders.push(...UNLOCK_COLLIDERS.sand);
-  if (S.level >= 5) colliders.push(...UNLOCK_COLLIDERS.fry);
-  if (S.level >= 9) colliders.push(...UNLOCK_COLLIDERS.bento);
-  if (expanded) DISPLAYS.forEach((def) => { if (S.level >= def.lv && UNLOCK_COLLIDERS[def.id]) colliders.push(...UNLOCK_COLLIDERS[def.id]); });
+  ITEMS.forEach((it) => { if (itemActive(it)) colliders.push(footBox(it, it.L.x, it.L.z, it.L.rot)); });
+  fillBlocked(blocked, colliders);
+  workers.forEach((w) => { w.home = freeNear(WORKER_HOME[w.role]); });
+}
+/** 当たり判定の箱から、通れないマスの表を作る */
+function fillBlocked(grid, boxes) {
   for (let iz = 0; iz < NAV.nz; iz++) {
     for (let ix = 0; ix < NAV.nx; ix++) {
       const x = NAV.x0 + ix * NAV.cs, z = NAV.z0 + iz * NAV.cs;
-      blocked[iz * NAV.nx + ix] = colliders.some((b) => distToBox(x, z, b) < 0.38) ? 1 : 0;
+      grid[iz * NAV.nx + ix] = boxes.some((b) => distToBox(x, z, b) < 0.38) ? 1 : 0;
     }
   }
+}
+/** 指定の場所に近い、通れるマスの中心 */
+function freeNear(p) {
+  const cx = clamp(Math.round((p.x - NAV.x0) / NAV.cs), 0, NAV.nx - 1), cz = clamp(Math.round((p.z - NAV.z0) / NAV.cs), 0, NAV.nz - 1);
+  if (!blocked[cz * NAV.nx + cx]) return { x: p.x, z: p.z };
+  for (let r = 1; r < 12; r++) {
+    let best = null, bd = 1e9;
+    for (let dz = -r; dz <= r; dz++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const X = cx + dx, Z = cz + dz;
+        if (X < 0 || Z < 0 || X >= NAV.nx || Z >= NAV.nz || blocked[Z * NAV.nx + X]) continue;
+        const wx = NAV.x0 + X * NAV.cs, wz = NAV.z0 + Z * NAV.cs;
+        const d = Math.hypot(wx - p.x, wz - p.z);
+        if (d < bd) { bd = d; best = { x: wx, z: wz }; }
+      }
+    }
+    if (best) return best;
+  }
+  return { x: p.x, z: p.z };
 }
 function collide(p, r) {
   for (const b of colliders) {
@@ -1138,9 +1156,16 @@ function updateMakers(dt) {
 const craft = {
   active: false, t: 0, ball: null, hold: false, hover: null, fly: null,
 };
-const FPS_POS = sl(0.5, 1.95, 1.75);
-const FPS_LOOK = sl(0.5, 0.88, -0.1);
-const FPS_RIGHT = sl(1, 0, 0).sub(sl(0, 0, 0)); // 画面の右方向（世界座標）
+let FPS_POS = sl(0.5, 1.95, 1.75);
+let FPS_LOOK = sl(0.5, 0.88, -0.1);
+let FPS_RIGHT = sl(1, 0, 0).sub(sl(0, 0, 0)); // 画面の右方向（世界座標）
+/** 握り台を動かしたとき、一人称の視点とラベルを台に合わせ直す */
+function syncStationFps() {
+  FPS_POS = sl(0.5, 1.95, 1.75);
+  FPS_LOOK = sl(0.5, 0.88, -0.1);
+  FPS_RIGHT = sl(1, 0, 0).sub(sl(0, 0, 0));
+  Object.entries(FPS_TAG_AT).forEach(([k, a]) => fpsTags[k].at(...sl(...a).toArray()));
+}
 // 画面が縦に近いほど視野を広げて、台の左右が見切れないようにする
 const fpsBaseFov = () => {
   const a = window.innerWidth / window.innerHeight;
@@ -1356,7 +1381,7 @@ function placeOneFrom(c, sh, silent) {
     tier.n++;
     c.oni[k]--;
     refreshShelf(sh);
-    if (!S.opened) { S.opened = true; spawnTimer = 10; }
+    if (!S.opened && !autoOpened) { autoOpened = true; S.opened = true; spawnTimer = 10; toast('開店しました！'); }
     return true;
   }
   return false;
@@ -1372,6 +1397,11 @@ function shelfRoomFor(sh, k) {
 }
 const SHELF_TIER_Y = [1.49, 1.11, 0.73, 0.35]; // 棚モデルの各段の高さ（上から）
 const _tp = new THREE.Vector3();
+/** 棚の向きに合わせた座標（lx=棚の横, lz=お客さん側） */
+const shelfLocal = (sh, lx, ly, lz) => {
+  const r = sh.pos.rot || 0;
+  return new THREE.Vector3(sh.pos.x + lx * Math.cos(r) + lz * Math.sin(r), ly, sh.pos.z - lx * Math.sin(r) + lz * Math.cos(r));
+};
 function renderShelfUi() {
   const hold = carryKind() === 'onigiri' ? KIND_IDS.filter((k) => carry.oni[k]).map((k) => `${KINDS[k].short}${carry.oni[k]}`).join(' ') : 'なし';
   let html = `<div class="hold">持っているおにぎり：${hold}${shelfMode.full && carryKind() === 'onigiri' ? '<br>（置ける段がいっぱい）' : ''}</div>`;
@@ -1386,7 +1416,7 @@ function placeTierButtons(sh) {
   for (let t = 0; t < 4; t++) {
     const el = els[t];
     if (!el) continue;
-    _tp.set(sh.pos.x - 1.15, SHELF_TIER_Y[t] + 0.17, sh.pos.z + 0.45).project(fpsCam);
+    _tp.copy(shelfLocal(sh, -1.15, SHELF_TIER_Y[t] + 0.17, 0.45)).project(fpsCam);
     const x = (_tp.x * 0.5 + 0.5) * W, y = (-_tp.y * 0.5 + 0.5) * H;
     el.style.display = ready ? '' : 'none';
     el.style.transform = `translate(${(x - 10).toFixed(1)}px,${y.toFixed(1)}px) translate(-100%,-50%)`;
@@ -1430,8 +1460,8 @@ function updateShelfMode(dt) {
   const zi = ease(shelfMode.t / 0.5);
   const fov = shelfFov() + 22 * (1 - zi);
   if (Math.abs(fpsCam.fov - fov) > 0.01) { fpsCam.fov = fov; fpsCam.updateProjectionMatrix(); }
-  fpsCam.position.set(sh.pos.x - 0.6, 1.65, sh.pos.z + 3.2);
-  fpsCam.lookAt(sh.pos.x - 0.6, 0.95, sh.pos.z);
+  fpsCam.position.copy(shelfLocal(sh, -0.6, 1.65, 3.2));
+  fpsCam.lookAt(shelfLocal(sh, -0.6, 0.95, 0));
   fpsCam.updateMatrixWorld(true);
   fpsCam.visible = true;
   shelfMode.timer -= dt;
@@ -1446,7 +1476,8 @@ function updateShelfMode(dt) {
 function updatePlayerShelf(dt) {
   const g = playerPerson.group;
   g.position.copy(player.pos);
-  g.rotation.y = lerpAngle(g.rotation.y, Math.PI, 1 - Math.exp(-12 * dt));
+  const sr = shelfMode.sh ? (shelfMode.sh.pos.rot || 0) : 0;
+  g.rotation.y = lerpAngle(g.rotation.y, Math.atan2(-Math.sin(sr), -Math.cos(sr)), 1 - Math.exp(-12 * dt));
   playerPerson.anim(dt, 0, false);
 }
 $('shelf-exit').addEventListener('click', () => exitShelf());
@@ -1590,7 +1621,12 @@ const SHIRTS = ['#e86a5c', '#f2b134', '#5aa9e6', '#8d6ae0', '#58b368', '#e88fb4'
 const PANTS = ['#35405a', '#5b4a3a', '#2f3b52', '#7a7a86', '#3d5a45'];
 const HAIRS = ['#2b2118', '#4a3322', '#7a4a28', '#c9a25a', '#222a3a', '#8c8c94'];
 const SKINS = ['#f7d2b0', '#f0c19a', '#e6ad84', '#fbdcc0'];
-const EXIT_PATH = () => LAYOUT.exitPath.map((p) => new THREE.Vector3(p.x, 0, p.z));
+/** 出口へ：レジの前などから、障害物をよけて自動ドアの外へ */
+const EXIT_PATH = (c) => {
+  const tail = LAYOUT.exitPath.slice(-2).map((p) => new THREE.Vector3(p.x, 0, p.z));
+  const mid = c ? findPath(c.pos.x, c.pos.z, LAYOUT.exitPath[1].x, LAYOUT.exitPath[1].z) : [];
+  return [...mid, ...tail];
+};
 function chooseKind() {
   const pool = KIND_IDS.filter(kindUnlocked);
   let r = Math.random() * pool.reduce((a, k) => a + KINDS[k].weight, 0);
@@ -1626,7 +1662,9 @@ class Customer {
     this.plan.forEach((stop) => { this.wish[stop] = this.makeWish(stop); });
     this.bag = {}; // 買ったもの { 商品id: 個数 }
     this.stopIdx = 0;
-    this.path = [...LAYOUT.entryPath.map((p) => new THREE.Vector3(p.x, 0, p.z)), this.stopTarget(0)];
+    const en = LAYOUT.entryPath;
+    const t0 = this.stopTarget(0);
+    this.path = [...en.map((p) => new THREE.Vector3(p.x, 0, p.z)), ...this.pathTo(en[en.length - 1], t0)];
     this.state = 'enter';
     this.timer = 0;
     this.sat = 0; // 希望どおり買えた数
@@ -1666,6 +1704,11 @@ class Customer {
     const stop = this.plan[i];
     const u = stop === 'shelf' ? this.shelf.pos.use : DISP_BY_STOP[stop].layout.use;
     return new THREE.Vector3(u.x + rand(-0.4, 0.4), 0, u.z);
+  }
+  /** from から to まで、障害物をよけて歩く道すじ */
+  pathTo(from, to) {
+    const p = findPath(from.x, from.z, to.x, to.z);
+    return p.length ? p : [new THREE.Vector3(to.x, 0, to.z)];
   }
   setEmo(e, t = 0) { this.emo = e; this.emoTimer = t; }
   step(dt) {
@@ -1716,7 +1759,7 @@ class Customer {
       S.rep = clamp(S.rep - 0.2, 0, 5);
       ratingPopup(this, -1);
       this.setEmo('😞', 3);
-      this.leave(EXIT_PATH());
+      this.leave(EXIT_PATH(this));
       return;
     }
     const oni = emptyCounts();
@@ -1740,7 +1783,8 @@ class Customer {
         break;
       case 'browse': {
         const stop = this.plan[this.stopIdx];
-        this.facing = stop === 'shelf' ? Math.atan2(-Math.sin(sh.pos.rot), -Math.cos(sh.pos.rot)) : DISP_BY_STOP[stop].face;
+        const rot = stop === 'shelf' ? (sh.pos.rot || 0) : (DISP_BY_STOP[stop].layout.rot || 0);
+        this.facing = Math.atan2(-Math.sin(rot), -Math.cos(rot));
         this.timer -= dt;
         if (this.timer <= 0) {
           this.pickAt(stop);
@@ -1748,7 +1792,7 @@ class Customer {
           this.stopIdx++;
           if (this.stopIdx < this.plan.length) {
             this.state = 'enter';
-            this.path = [this.stopTarget(this.stopIdx)];
+            this.path = this.pathTo(this.pos, this.stopTarget(this.stopIdx));
             this.setEmo('');
           } else this.finishShopping();
         }
@@ -1759,7 +1803,11 @@ class Customer {
         this.tickPatience(dt);
         const idx = queue.indexOf(this);
         const q = LAYOUT.queue(idx);
-        const dx = q.x - this.pos.x, dz = q.z - this.pos.z;
+        const key = q.x.toFixed(2) + ',' + q.z.toFixed(2);
+        if (this.qkey !== key) { this.qkey = key; this.qpath = findPath(this.pos.x, this.pos.z, q.x, q.z); }
+        while (this.qpath.length && Math.hypot(this.qpath[0].x - this.pos.x, this.qpath[0].z - this.pos.z) < 0.08) this.qpath.shift();
+        const tg = this.qpath.length ? this.qpath[0] : q;
+        const dx = tg.x - this.pos.x, dz = tg.z - this.pos.z;
         const d = Math.hypot(dx, dz);
         if (d > 0.06) {
           const m = Math.min(d, this.speed * dt);
@@ -1768,13 +1816,14 @@ class Customer {
           this.facing = Math.atan2(dx, dz);
           this.curSpeed = this.speed;
         } else {
-          this.facing = -Math.PI / 2; // カウンター（左）の方を向く
+          const rf = (LAYOUT.register.rot || 0) + Math.PI; // カウンターの方を向く
+          this.facing = Math.atan2(Math.sin(rf), Math.cos(rf));
           if (idx === 0) this.state = 'waitPay';
         }
         break;
       }
       case 'serving':
-        this.facing = -Math.PI / 2;
+        this.facing = (LAYOUT.register.rot || 0) + Math.PI;
         break;
       case 'leave':
         if (this.step(dt)) this.dispose();
@@ -1811,7 +1860,7 @@ class Customer {
     S.rep = clamp(S.rep - 0.2, 0, 5);
     ratingPopup(this, -1);
     this.setEmo('💢', 4);
-    this.leave(EXIT_PATH());
+    this.leave(EXIT_PATH(this));
   }
   /** 買ったものを、それぞれの売り場に戻す */
   returnItems() {
@@ -1835,12 +1884,12 @@ class Customer {
     S.rep = clamp(S.rep + delta, 0, 5);
     if (delta !== 0) ratingPopup(this, delta);
     shopDirty = orderDirty = true;
-    popup(LAYOUT.register.x - 0.4, 1.9, LAYOUT.register.z, `+${yen(sum)}`);
+    popup(LAYOUT.register.use.x, 1.9, LAYOUT.register.use.z, `+${yen(sum)}`);
     addExp(n * 5);
     fillHold(this.person.hold, 'bag', 1);
     this.person.hold.position.set(0.3, 0.7, 0.2);
     this.setEmo(delta < 0 ? '😕' : '😊', 2.5);
-    this.leave(EXIT_PATH());
+    this.leave(EXIT_PATH(this));
   }
   dispose() {
     scene.remove(this.person.group);
@@ -2003,8 +2052,8 @@ class Worker {
     const look = WORKER_LOOK[role];
     this.person = makeRobot({ color: look.color, cap: role === 'kitchen' });
     const h = WORKER_HOME[role];
-    this.home = h;
-    this.pos = new THREE.Vector3(h.x, 0, h.z);
+    this.home = freeNear(h);
+    this.pos = new THREE.Vector3(this.home.x, 0, this.home.z);
     this.person.group.position.copy(this.pos);
     scene.add(this.person.group);
     shadowize(this.person.group);
@@ -2466,7 +2515,13 @@ $('order').addEventListener('click', (e) => {
   save();
 });
 
-// 1日の終わりは画面を出さず、静かに次の日へ（お客さんはそのまま。消さない）
+// 営業時間が終わったら閉店して、次の日の朝へ（店内のお客さんはそのまま。消さない）
+function endDay() {
+  const st = S.stats;
+  toast(`${S.day}日目 閉店！ 売上 ${yen(st.sales)}・来店 ${st.customers}人。「開店する」で次の日へ`, 6000);
+  S.opened = false;
+  nextDay();
+}
 function nextDay() {
   S.day++;
   S.time = DAY_START;
@@ -2485,11 +2540,16 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Escape') { // Esc：パネルが開いていれば閉じる／なければポーズ（もう一度でもどる）
     e.preventDefault();
     if (paused) setPause(false);
+    else if (edit.on) editEscape();
     else if (shopOpen || orderOpen || makerOpen) { toggleShop(false); toggleOrder(false); toggleMaker(false); }
     else setPause(true);
     return;
   }
   if (paused) return;
+  if (edit.on) { // レイアウト編集：R 回転 / L 完了
+    if (e.code === 'KeyR') { e.preventDefault(); rotateSel(); } else if (e.code === 'KeyL') exitEdit();
+    return;
+  }
   if (shelfMode.active) { // 棚モード：E / Q / 移動キーで抜ける
     if (['KeyE', 'KeyQ', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) {
       e.preventDefault();
@@ -2510,6 +2570,8 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     if (bestStation) { bestStation.act(); shopDirty = orderDirty = true; }
   } else if (e.code === 'KeyB') toggleShop();
+  else if (e.code === 'KeyL') enterEdit();
+  else if (e.code === 'KeyO') { if (S.opened) closeShop(); else openShop(); }
   else if (e.code === 'KeyR') { view.az = rad(40); view.el = rad(41); userZoomed = false; view.dist = defaultDist(); }
   else if (e.code.startsWith('Arrow')) e.preventDefault();
 });
@@ -2540,6 +2602,7 @@ let drag = null;
 canvas.addEventListener('pointerdown', (e) => {
   if (!started || paused || shelfMode.active) return;
   if (craft.active) { craftPointerDown(e); return; }
+  if (edit.on && e.button === 0) { editPointerDown(e); return; }
   if (e.button === 2 || e.button === 1) {
     drag = { x: e.clientX, y: e.clientY };
     canvas.setPointerCapture(e.pointerId);
@@ -2734,10 +2797,10 @@ function updateWorld(dt) {
   doorOpen += ((wantOpen ? 1 : 0) - doorOpen) * (1 - Math.exp(-8 * dt));
   door.panels.forEach((p) => { p.position.x = p.userData.baseX + p.userData.dir * doorOpen * 0.8; });
 
-  // 時間（見た目の昼夜サイクルだけ。画面には出さない）
+  // 時間（開店中だけ進む。閉店・編集中は止まる）
   if (S.opened) {
     S.time += (dt * (DAY_END - DAY_START)) / DAY_SECONDS;
-    if (S.time >= DAY_END) nextDay();
+    if (S.time >= DAY_END) endDay();
   }
   applyLighting(S.time, dt);
 }
@@ -2777,6 +2840,7 @@ function updateHud(dt) {
   setText('lv-v', `Lv.${S.level}`);
   const need = expNeed(S.level);
   setText('exp-v', `EXP ${S.exp} / ${need}`);
+  updateClock();
   const w = `${Math.round((S.exp / need) * 100)}%`;
   if (hudCache.expw !== w) { hudCache.expw = w; $('exp-bar').style.width = w; }
   const kind = carryKind();
@@ -2842,6 +2906,450 @@ function render() {
 }
 
 /* =====================================================================
+ *  レイアウト編集（床はタイル。店を閉めているときだけ、設備を動かせる）
+ * ===================================================================== */
+const TILE = 0.5; // 床のタイル（マス）の大きさ
+const SNAP = 0.25; // 設備の縁をそろえる刻み（タイル半分）
+const QUARTER = Math.PI / 2;
+// 設備のローカル座標(lx=長さ方向, lz=手前) ⇔ ワールド（向き rot）
+const rotXZ = (x, z, rot) => ({ x: x * Math.cos(rot) + z * Math.sin(rot), z: -x * Math.sin(rot) + z * Math.cos(rot) });
+const unrotXZ = (x, z, rot) => ({ x: x * Math.cos(rot) - z * Math.sin(rot), z: x * Math.sin(rot) + z * Math.cos(rot) });
+const normRot = (r) => { let a = r % (Math.PI * 2); if (a > Math.PI + 1e-6) a -= Math.PI * 2; if (a <= -Math.PI - 1e-6) a += Math.PI * 2; return a; };
+const isQ = (rot) => (Math.round(rot / QUARTER) & 1) === 1; // 90°回っているか（縦横が入れ替わる）
+
+const ITEMS = [];
+function addItem(o) {
+  const L = o.L;
+  if (L.rot === undefined) L.rot = 0;
+  const b = ITEM_BOXES[o.box];
+  const off = unrotXZ((b.x0 + b.x1) / 2 - L.x, (b.z0 + b.z1) / 2 - L.z, L.rot);
+  const sx = b.x1 - b.x0, sz = b.z1 - b.z0;
+  const q = isQ(L.rot);
+  const it = {
+    ...o,
+    home: { x: L.x, z: L.z, rot: L.rot },
+    foot: { w: q ? sz : sx, d: q ? sx : sz, ox: off.x, oz: off.z },
+    useLocal: unrotXZ(L.use.x - L.x, L.use.z - L.z, L.rot),
+    exp: !!o.exp,
+  };
+  o.group.userData.editItem = it;
+  ITEMS.push(it);
+  return it;
+}
+const regL = LAYOUT.register;
+const REG_STAFF_LOCAL = unrotXZ(regL.staff.x - regL.x, regL.staff.z - regL.z, regL.rot);
+const REG_Q0 = unrotXZ(LAYOUT.queue(0).x - regL.x, LAYOUT.queue(0).z - regL.z, regL.rot);
+const REG_QSTEP = (() => { const a = LAYOUT.queue(0), b = LAYOUT.queue(1); return unrotXZ(b.x - a.x, b.z - a.z, regL.rot); })();
+LAYOUT.queue = (i) => {
+  const k = Math.min(i, 4);
+  const o = rotXZ(REG_Q0.x + REG_QSTEP.x * k, REG_Q0.z + REG_QSTEP.z * k, regL.rot);
+  return { x: regL.x + o.x, z: regL.z + o.z };
+};
+addItem({ id: 'cooker', name: '炊飯器', L: LAYOUT.cooker, box: 'cooker', group: cookerModel.group, station: 'cooker', lv: 1, tags: [[cookerTag, 2.7]] });
+addItem({ id: 'station', name: '握り台', L: LAYOUT.station, box: 'station', group: stationModel.group, station: 'station', lv: 1, tags: [[stationTag, 2.2]], after: syncStationFps });
+addItem({ id: 'tray', name: 'トレー台', L: LAYOUT.tray, box: 'tray', group: trayModel.group, station: 'tray', lv: 1, tags: [[trayTag, 2.2]] });
+addItem({
+  id: 'register', name: 'レジ', L: LAYOUT.register, box: 'register', group: regModel.group, station: 'register', lv: 1, tags: [[regTag, 2.1]],
+  after() {
+    const o = rotXZ(REG_STAFF_LOCAL.x, REG_STAFF_LOCAL.z, regL.rot);
+    regL.staff.x = regL.x + o.x;
+    regL.staff.z = regL.z + o.z;
+    staff.group.position.set(regL.staff.x, 0, regL.staff.z);
+    staff.group.rotation.y = regL.rot;
+    cashierTag.at(regL.staff.x, 1.75, regL.staff.z);
+  },
+});
+shelves.forEach((sh) => addItem({ id: 'shelf' + sh.i, name: 'おにぎりの棚', L: sh.pos, box: 'shelf', group: sh.model.group, station: 'shelf' + sh.i, lv: 1, tags: [[sh.tag, 2.5]] }));
+const MAKER_ITEM = { sand: ['sandTable', 'サンドイッチ台'], fry: ['fryer', '揚げ物台'], bento: ['bentoTable', '弁当台'] };
+Object.values(makers).forEach((mk) => addItem({ id: mk.id + 'Table', name: MAKER_ITEM[mk.id][1], L: LAYOUT[MAKER_ITEM[mk.id][0]], box: mk.id, group: mk.model.group, station: mk.id, lv: mk.lv, tags: [[makerTags[mk.id], 2.2]] }));
+const DISP_NAME = { fridge: '飲み物の冷蔵庫', sandcase: 'サンドのケース', hotcase: 'ホットスナックケース', snackrack: 'お菓子棚', bentocase: 'お弁当ケース', sweetcase: 'スイーツケース' };
+DISPLAYS.forEach((def) => addItem({ id: def.id, name: DISP_NAME[def.id], L: def.layout, box: def.id, group: def.d.model.group, station: def.id, lv: def.lv, exp: true, tags: [[def.tag, def.tagY]] }));
+
+const itemActive = (it) => S.level >= it.lv && (!it.exp || expanded);
+function footBox(it, x, z, rot) {
+  const o = rotXZ(it.foot.ox, it.foot.oz, rot);
+  const q = isQ(rot);
+  const hw = (q ? it.foot.d : it.foot.w) / 2, hd = (q ? it.foot.w : it.foot.d) / 2;
+  return { x0: x + o.x - hw, x1: x + o.x + hw, z0: z + o.z - hd, z1: z + o.z + hd };
+}
+const overlap = (a, b) => a.x0 < b.x1 - 1e-6 && a.x1 > b.x0 + 1e-6 && a.z0 < b.z1 - 1e-6 && a.z1 > b.z0 + 1e-6;
+/** 設備を、いまの LAYOUT の位置・向きにあわせる（モデル・操作位置・ラベル） */
+function applyItem(it) {
+  const L = it.L;
+  it.group.position.x = L.x;
+  it.group.position.z = L.z;
+  it.group.rotation.y = L.rot;
+  const u = rotXZ(it.useLocal.x, it.useLocal.z, L.rot);
+  L.use.x = L.x + u.x;
+  L.use.z = L.z + u.z;
+  const st = stations.find((s) => s.id === it.station);
+  if (st) { st.use.set(L.use.x, 0, L.use.z); st.marker.position.copy(st.use); }
+  it.tags.forEach(([tag, y]) => tag.at(L.x, y, L.z));
+  if (it.after) it.after();
+}
+function setItemPose(it, x, z, rot) {
+  it.L.x = x; it.L.z = z; it.L.rot = rot;
+  applyItem(it);
+}
+/** 設備の位置が変わったあとの後始末 */
+function relayout() {
+  rebuildColliders();
+  collide(player.pos, 0.35);
+}
+function resetLayout() {
+  ITEMS.forEach((it) => setItemPose(it, it.home.x, it.home.z, it.home.rot));
+  S.layout = {};
+  relayout();
+}
+function loadLayout() {
+  ITEMS.forEach((it) => {
+    const s = S.layout && S.layout[it.id];
+    if (s && [s.x, s.z, s.rot].every(Number.isFinite)) setItemPose(it, s.x, s.z, s.rot);
+    else setItemPose(it, it.home.x, it.home.z, it.home.rot);
+  });
+  relayout();
+}
+
+/* ---- 置けるかどうかの判定 ---- */
+const DOOR_ZONE = { x0: -0.95, x1: 1.15, z0: 2.3, z1: 4.0 }; // 入口の前（お客さんの通り道）
+const BACK_ZONE = { x0: -6.9, x1: -4.85, z0: 1.55, z1: 4.0 }; // 搬入口の前・充電スポット
+const trialBlocked = new Uint8Array(NAV.nx * NAV.nz);
+const cellOf = (x, z) => [clamp(Math.round((x - NAV.x0) / NAV.cs), 0, NAV.nx - 1), clamp(Math.round((z - NAV.z0) / NAV.cs), 0, NAV.nz - 1)];
+function placementCheck(it, x, z, rot) {
+  const box = footBox(it, x, z, rot);
+  const xMax = expanded ? 6.0 : 3.5;
+  if (box.x0 < -7 - 1e-6 || box.x1 > xMax + 1e-6 || box.z0 < -8.5 - 1e-6 || box.z1 > 4.0 + 1e-6) return { ok: false, reason: '店の外には置けない' };
+  const fixed = [...COLLIDERS, ...(expanded ? EXP_COLLIDERS : [])];
+  if (fixed.some((b) => overlap(box, b))) return { ok: false, reason: '壁や飾りとかぶっている' };
+  if (overlap(box, DOOR_ZONE)) return { ok: false, reason: '入口の前はふさげない' };
+  if (overlap(box, BACK_ZONE)) return { ok: false, reason: '搬入口・充電スポットの前はふさげない' };
+  const others = ITEMS.filter((o) => o !== it);
+  if (others.some((o) => overlap(box, footBox(o, o.L.x, o.L.z, o.L.rot)))) return { ok: false, reason: '他の設備とかぶっている' };
+  // 通路：入口から、すべての設備の操作位置まで歩いて行けるか
+  const boxes = [...COLLIDERS, ...(expanded ? EXP_COLLIDERS : []), box];
+  if (!expanded) boxes.push({ x0: 3.5, x1: 9, z0: -7, z1: 6 });
+  others.forEach((o) => { if (itemActive(o)) boxes.push(footBox(o, o.L.x, o.L.z, o.L.rot)); });
+  fillBlocked(trialBlocked, boxes);
+  const useP = (o, X, Z, R) => { const u = rotXZ(o.useLocal.x, o.useLocal.z, R); return { x: X + u.x, z: Z + u.z }; };
+  const free = (p) => { const [cx, cz] = cellOf(p.x, p.z); return !trialBlocked[cz * NAV.nx + cx]; };
+  const myUse = useP(it, x, z, rot);
+  if (!free(myUse)) return { ok: false, reason: '前（操作する場所）がふさがる' };
+  const targets = [myUse, LAYOUT.backDoor.use];
+  others.forEach((o) => { if (itemActive(o)) targets.push({ x: o.L.use.x, z: o.L.use.z }); });
+  if (!free({ x: 0.125, z: 3.0 })) return { ok: false, reason: '入口がふさがる' };
+  // レジの行列（先頭）も確認
+  const rq = it.id === 'register'
+    ? (() => { const o = rotXZ(REG_Q0.x, REG_Q0.z, rot); return { x: x + o.x, z: z + o.z }; })()
+    : LAYOUT.queue(0);
+  targets.push(rq);
+  const seen = new Uint8Array(NAV.nx * NAV.nz);
+  const [sx, sz] = cellOf(0.125, 3.0);
+  const stack = [sz * NAV.nx + sx];
+  seen[stack[0]] = 1;
+  while (stack.length) {
+    const n = stack.pop();
+    const cx = n % NAV.nx, cz = (n / NAV.nx) | 0;
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dz) continue;
+        const X = cx + dx, Z = cz + dz;
+        if (X < 0 || Z < 0 || X >= NAV.nx || Z >= NAV.nz) continue;
+        const k = Z * NAV.nx + X;
+        if (seen[k] || trialBlocked[k]) continue;
+        if (dx && dz && (trialBlocked[cz * NAV.nx + X] || trialBlocked[Z * NAV.nx + cx])) continue;
+        seen[k] = 1;
+        stack.push(k);
+      }
+    }
+  }
+  for (const t of targets) {
+    const [cx, cz] = cellOf(t.x, t.z);
+    if (!seen[cz * NAV.nx + cx]) return { ok: false, reason: '通れない場所ができてしまう' };
+  }
+  return { ok: true, reason: '' };
+}
+
+/* ---- 編集モード ---- */
+const edit = { on: false, sel: null, hover: null, grab: { x: 0, z: 0 }, orig: null, pose: null, key: '', check: { ok: true, reason: '' }, resetArm: false, markers: [], savedMarkers: [] };
+let tagsMuted = false;
+const editGroup = new THREE.Group();
+editGroup.visible = false;
+scene.add(editGroup);
+{
+  // 床のマス目
+  const mk = (x0, x1) => {
+    const pts = [];
+    for (let x = x0; x <= x1 + 1e-6; x += TILE) pts.push(x, 0.045, -8.5, x, 0.045, 4);
+    for (let z = -8.5; z <= 4 + 1e-6; z += TILE) pts.push(x0, 0.045, z, x1, 0.045, z);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    const l = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: '#3d6178', transparent: true, opacity: 0.38, depthWrite: false }));
+    l.userData.noShadow = true;
+    return l;
+  };
+  edit.gridMain = mk(-7, 3.5);
+  edit.gridExp = mk(3.5, 6.0);
+  editGroup.add(edit.gridMain, edit.gridExp);
+}
+ITEMS.forEach((it) => {
+  const g = new THREE.Group();
+  const plane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.25, depthWrite: false, side: THREE.DoubleSide }));
+  plane.rotation.x = -Math.PI / 2;
+  plane.position.y = 0.05;
+  plane.userData.editItem = it;
+  const front = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: '#1b2a35', transparent: true, opacity: 0.95, depthWrite: false, depthTest: false, side: THREE.DoubleSide }));
+  front.rotation.x = -Math.PI / 2;
+  front.position.y = 0.06;
+  front.renderOrder = 6;
+  // 設備の下に隠れないように、縁の枠線は手前に描く
+  const frameMat = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.95, depthWrite: false, depthTest: false, side: THREE.DoubleSide });
+  const T = 0.07, W = it.foot.w, D = it.foot.d, X = it.foot.ox, Z = it.foot.oz;
+  [[W, T, X, Z - D / 2 + T / 2], [W, T, X, Z + D / 2 - T / 2], [T, D, X - W / 2 + T / 2, Z], [T, D, X + W / 2 - T / 2, Z]].forEach(([w, d, x, z]) => {
+    const s = new THREE.Mesh(new THREE.PlaneGeometry(w, d), frameMat);
+    s.rotation.x = -Math.PI / 2;
+    s.position.set(x, 0.058, z);
+    s.renderOrder = 5;
+    s.userData.noShadow = true;
+    g.add(s);
+  });
+  g.add(plane, front);
+  g.userData.noShadow = plane.userData.noShadow = front.userData.noShadow = true;
+  editGroup.add(g);
+  const tag = new Tag();
+  tag.edit = true;
+  tag.on = false;
+  edit.markers.push({ it, g, plane, front, frameMat, tag });
+});
+function updateMarker(mk, state) {
+  const { it, g, plane, front, frameMat, tag } = mk;
+  const L = it.L;
+  g.position.set(L.x, 0, L.z);
+  g.rotation.y = L.rot;
+  plane.scale.set(it.foot.w, it.foot.d, 1);
+  plane.position.x = it.foot.ox; plane.position.z = it.foot.oz;
+  front.scale.set(it.foot.w * 0.6, 0.12, 1);
+  front.position.x = it.foot.ox; front.position.z = it.foot.oz + it.foot.d / 2 - 0.1;
+  const locked = !itemActive(it);
+  const cols = { normal: '#9fd0ff', hover: '#ffe28a', ok: '#38e07b', bad: '#ff4a3d' };
+  const c = state === 'sel' ? (edit.check.ok ? cols.ok : cols.bad) : state === 'hover' ? cols.hover : cols.normal;
+  plane.material.color.set(locked && state !== 'sel' && state !== 'hover' ? '#b7c0c6' : c);
+  plane.material.opacity = state === 'sel' ? 0.5 : state === 'hover' ? 0.42 : locked ? 0.22 : 0.3;
+  frameMat.color.set(state === 'sel' ? c : state === 'hover' ? cols.hover : locked ? '#8c99a2' : '#2f7ff0');
+  front.material.color.set(locked && state === 'normal' ? '#8c99a2' : '#1b2a35');
+  const lvTxt = locked ? `（Lv.${it.lv}で解禁）` : '';
+  tag.at(L.x + rotXZ(it.foot.ox, it.foot.oz, L.rot).x, 1.6, L.z + rotXZ(it.foot.ox, it.foot.oz, L.rot).z);
+  tag.set({ chip: it.name + lvTxt, tone: state === 'sel' ? (edit.check.ok ? 'good' : 'warn') : '' });
+}
+const canEdit = () => started && !S.opened && customers.length === 0 && couriers.length === 0 && !craft.active && !shelfMode.active && !paused;
+function editBlockReason() {
+  if (S.opened) return '店を閉めてから編集できるよ';
+  if (customers.length || couriers.length) return 'お客さんや配達員がいなくなったら編集できるよ';
+  return '';
+}
+function enterEdit() {
+  if (edit.on) return;
+  const why = editBlockReason();
+  if (why) return rest(why);
+  if (!canEdit()) return;
+  edit.on = true;
+  edit.sel = null;
+  edit.hover = null;
+  edit.resetArm = false;
+  toggleShop(false); toggleOrder(false); toggleMaker(false);
+  keys.clear();
+  player.path = []; player.target = null; player.vel.set(0, 0, 0);
+  tagsMuted = true;
+  allTags.forEach((t) => { if (!t.edit) { t.wasOn = t.on; t.on = false; } }); // 通常のラベルは編集中は隠す
+  editGroup.visible = true;
+  edit.gridExp.visible = expanded;
+  edit.markers.forEach((mk) => { mk.tag.on = true; });
+  stations.forEach((st) => { st.marker.userData.wasVisible = st.marker.visible; st.marker.visible = false; });
+  document.body.classList.add('editing');
+  $('editbar').style.display = 'flex';
+  edit.key = '';
+  renderEditBar();
+}
+function exitEdit() {
+  if (!edit.on) return;
+  if (edit.sel) cancelSel();
+  edit.on = false;
+  tagsMuted = false;
+  allTags.forEach((t) => { if (!t.edit && t.wasOn !== undefined) { t.on = t.wasOn; t.wasOn = undefined; } });
+  editGroup.visible = false;
+  edit.markers.forEach((mk) => { mk.tag.on = false; });
+  stations.forEach((st) => { if (st.marker.userData.wasVisible !== undefined) st.marker.visible = st.marker.userData.wasVisible; });
+  document.body.classList.remove('editing');
+  $('editbar').style.display = 'none';
+  applyUnlocks();
+  save();
+  toast('レイアウトを保存しました');
+}
+function cancelSel() {
+  if (!edit.sel) return;
+  const it = edit.sel, o = edit.orig;
+  setItemPose(it, o.x, o.z, o.rot);
+  edit.sel = null;
+  edit.key = '';
+}
+const _eh = new THREE.Vector3();
+function editGround() {
+  raycaster.setFromCamera(mouse, camera);
+  return raycaster.ray.intersectPlane(groundPlane, _eh) ? _eh : null;
+}
+function editItemAt() {
+  raycaster.setFromCamera(mouse, camera);
+  const objs = [...ITEMS.filter((it) => it.group.visible).map((it) => it.group), ...edit.markers.map((mk) => mk.plane)];
+  const hits = raycaster.intersectObjects(objs, true);
+  for (const h of hits) {
+    let o = h.object;
+    while (o && !o.userData.editItem) o = o.parent;
+    if (o) return o.userData.editItem;
+  }
+  return null;
+}
+function pickItem(it) {
+  if (edit.sel) cancelSel();
+  const g = editGround();
+  edit.sel = it;
+  edit.orig = { x: it.L.x, z: it.L.z, rot: it.L.rot };
+  const c = footBox(it, it.L.x, it.L.z, it.L.rot);
+  edit.grab = g ? { x: g.x - (c.x0 + c.x1) / 2, z: g.z - (c.z0 + c.z1) / 2 } : { x: 0, z: 0 };
+  edit.key = '';
+}
+/** カーソルの位置に、設備の縁をマスの刻みにそろえて動かす */
+function followMouse() {
+  const it = edit.sel;
+  const g = editGround();
+  if (!it || !g) return;
+  const rot = it.L.rot;
+  const o = rotXZ(it.foot.ox, it.foot.oz, rot);
+  const q = isQ(rot);
+  const hw = (q ? it.foot.d : it.foot.w) / 2, hd = (q ? it.foot.w : it.foot.d) / 2;
+  const cx = g.x - edit.grab.x, cz = g.z - edit.grab.z;
+  const x0 = Math.round((cx - hw) / SNAP) * SNAP, z0 = Math.round((cz - hd) / SNAP) * SNAP;
+  const nx = x0 + hw - o.x, nz = z0 + hd - o.z;
+  const k = `${nx.toFixed(3)},${nz.toFixed(3)},${rot.toFixed(3)}`;
+  if (k === edit.key) return;
+  edit.key = k;
+  setItemPose(it, nx, nz, rot);
+  edit.check = placementCheck(it, nx, nz, rot);
+  renderEditBar();
+}
+function rotateSel() {
+  const it = edit.sel;
+  if (!it) return;
+  const L = it.L;
+  const o = rotXZ(it.foot.ox, it.foot.oz, L.rot);
+  const cx = L.x + o.x, cz = L.z + o.z; // 縁の中心は動かさずに回す
+  const nr = normRot(L.rot + QUARTER);
+  const o2 = rotXZ(it.foot.ox, it.foot.oz, nr);
+  const q = isQ(nr);
+  const hw = (q ? it.foot.d : it.foot.w) / 2, hd = (q ? it.foot.w : it.foot.d) / 2;
+  const x0 = Math.round((cx - hw) / SNAP) * SNAP, z0 = Math.round((cz - hd) / SNAP) * SNAP;
+  const nx = x0 + hw - o2.x, nz = z0 + hd - o2.z;
+  setItemPose(it, nx, nz, nr);
+  edit.key = `${nx.toFixed(3)},${nz.toFixed(3)},${nr.toFixed(3)}`;
+  edit.check = placementCheck(it, nx, nz, nr);
+  renderEditBar();
+}
+function placeSel() {
+  const it = edit.sel;
+  if (!it) return;
+  const c = placementCheck(it, it.L.x, it.L.z, it.L.rot);
+  edit.check = c;
+  if (!c.ok) { rest(c.reason); renderEditBar(); return; }
+  S.layout = S.layout || {};
+  S.layout[it.id] = { x: it.L.x, z: it.L.z, rot: it.L.rot };
+  edit.sel = null;
+  edit.key = '';
+  relayout();
+  save();
+  toast(`${it.name}を置いた`);
+  renderEditBar();
+}
+function renderEditBar() {
+  const it = edit.sel;
+  let msg;
+  if (!it) msg = '動かしたい設備をクリックしてね（床のタイル1マス = 0.5m）';
+  else if (edit.check.ok) msg = `「${it.name}」を移動中 — クリックで置く`;
+  else msg = `「${it.name}」を移動中 — <b class="bad">${edit.check.reason}</b>`;
+  const h = `<div class="et">🛠 レイアウト編集 <small>時間は止まっています</small></div><div class="em">${msg}</div>
+    <div class="eb"><button class="btn sub" data-edit="rot" ${it ? '' : 'disabled'}>↻ 回転 [R]</button>
+    <button class="btn sub" data-edit="cancel" ${it ? '' : 'disabled'}>キャンセル [Esc]</button>
+    <button class="btn sub" data-edit="reset">${edit.resetArm ? '本当に戻す？' : '初期配置に戻す'}</button>
+    <button class="btn green" data-edit="done">✔ 完了 [L]</button></div>`;
+  if ($('editbar')._h !== h) { $('editbar')._h = h; $('editbar').innerHTML = h; }
+}
+$('editbar').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b || !edit.on) return;
+  const a = b.dataset.edit;
+  if (a !== 'reset') edit.resetArm = false;
+  if (a === 'rot') rotateSel();
+  else if (a === 'cancel') cancelSel();
+  else if (a === 'done') exitEdit();
+  else if (a === 'reset') {
+    if (edit.resetArm) { cancelSel(); resetLayout(); edit.resetArm = false; toast('初期配置に戻しました'); } else edit.resetArm = true;
+  }
+  renderEditBar();
+});
+function editPointerDown(e) {
+  mouse.set((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
+  if (edit.sel) { placeSel(); return; }
+  const it = editItemAt();
+  if (it) pickItem(it);
+}
+function editEscape() {
+  if (edit.sel) { cancelSel(); renderEditBar(); } else exitEdit();
+}
+function updateEdit() {
+  edit.gridExp.visible = expanded;
+  if (edit.sel) followMouse();
+  else edit.hover = editItemAt();
+  edit.markers.forEach((mk) => updateMarker(mk, mk.it === edit.sel ? 'sel' : mk.it === edit.hover ? 'hover' : 'normal'));
+  canvas.style.cursor = edit.sel ? 'grabbing' : edit.hover ? 'grab' : '';
+}
+
+/* =====================================================================
+ *  1日の流れ（開店・閉店・時計）
+ * ===================================================================== */
+let autoOpened = false; // はじめて棚に並べたとき、自動で開店するのは1回だけ
+function openShop() {
+  if (S.opened) return;
+  S.opened = true;
+  spawnTimer = 6;
+  toast('開店しました！');
+  save();
+}
+function closeShop() {
+  if (!S.opened) return;
+  S.opened = false;
+  toast('閉店しました。お客さんが帰ったら、レイアウトを編集できます', 3500);
+  save();
+}
+$('btn-open').addEventListener('click', () => { if (S.opened) closeShop(); else openShop(); });
+$('btn-edit').addEventListener('click', () => { if (edit.on) exitEdit(); else enterEdit(); });
+function updateClock() {
+  const h = Math.floor(S.time), mi = Math.floor((S.time - h) * 60);
+  const icon = S.time < 17 ? '☀' : S.time < 19.5 ? '🌇' : '🌙';
+  const state = S.opened ? '営業中' : customers.length ? '閉店作業中…' : '準備中';
+  setText('day-v', `${S.day}日目`);
+  setText('time-v', `${icon} ${h}:${String(mi).padStart(2, '0')}`);
+  setText('state-v', state);
+  const sv = $('state-v');
+  const cls = S.opened ? 'open' : 'closed';
+  if (sv.className !== cls) sv.className = cls;
+  setText('btn-open', S.opened ? '閉店する' : '開店する');
+  const bo = $('btn-open');
+  bo.className = 'btn ' + (S.opened ? 'sub' : 'green');
+  bo.style.display = edit.on ? 'none' : '';
+  setText('btn-edit', edit.on ? '✔ 編集を終える' : '🛠 レイアウト編集');
+  const be = $('btn-edit');
+  be.disabled = !edit.on && !!editBlockReason();
+  be.title = edit.on ? '' : editBlockReason();
+}
+
+/* =====================================================================
  *  メインループ
  * ===================================================================== */
 applyUpgrades();
@@ -2854,6 +3362,15 @@ function loop() {
 }
 function frame(dt) {
   if (started && paused) { updateCamera(); render(); return; } // ポーズ中は時間を止める
+  if (started && edit.on) { // レイアウト編集中も時間を止める（カメラとマウスだけ動く）
+    updateEdit();
+    updateClock();
+    view.target.x += ((expanded ? -2.9 : LAYOUT.view.x) - view.target.x) * (1 - Math.exp(-3 * dt));
+    if (!userZoomed) view.dist += (defaultDist() - view.dist) * (1 - Math.exp(-3 * dt));
+    updateCamera();
+    render();
+    return;
+  }
   elapsed += dt;
   if (started) {
     if (craft.active) updatePlayerCrafting(dt);
@@ -2917,9 +3434,11 @@ function quitGame() {
 function startGame(n) {
   currentSlot = n;
   S = readSlot(n) || defaultState();
-  S.opened = false; // 在庫は持ち越さないので、棚に並べるまで準備中
+  S.opened = false; // 在庫は持ち越さないので、棚に並べるか「開店する」まで準備中
+  autoOpened = false;
   window.__game.S = S;
   applyUpgrades();
+  loadLayout();
   view.az = rad(40);
   view.el = rad(41);
   userZoomed = false;
@@ -2954,4 +3473,4 @@ showMenu('main');
 
 loop();
 // 動作確認用
-window.__game = { frame, fpsCam, shelfMode, DISPLAYS, workers, buyRobot, upgradeRobot, buyCharger, makers, sandCase, hotCase, S, stations, shelves, cooker, stn, customers, queue, player, view, craft, carry, fridge, addExp, findPath };
+window.__game = { frame, fpsCam, shelfMode, DISPLAYS, workers, buyRobot, upgradeRobot, buyCharger, edit, ITEMS, enterEdit, exitEdit, openShop, closeShop, placementCheck, pickItem, placeSel, rotateSel, setItemPose, relayout, updateEdit, endDay, makers, sandCase, hotCase, S, stations, shelves, cooker, stn, customers, queue, player, view, craft, carry, fridge, addExp, findPath };
