@@ -279,6 +279,7 @@ export function makePerson(o = {}) {
   sp(head, 0.27, skin, [0, 0, 0]);
   sp(head, 0.285, o.hair || '#3a2a20', [0, 0.05, -0.04], {}, 0.85);
   bx(head, [0.5, 0.1, 0.1], o.hair || '#3a2a20', [0, 0.1, 0.16], { r: 0.04 }); // 前髪
+  if (o.pompadour) bx(head, [0.3, 0.2, 0.36], o.hair || '#3a2a20', [0, 0.16, 0.2], { r: 0.06 }); // リーゼント
   sp(head, 0.036, '#222', [-0.095, -0.02, 0.245]);
   sp(head, 0.036, '#222', [0.095, -0.02, 0.245]);
   sp(head, 0.04, '#ff9aa2', [-0.17, -0.09, 0.2], { transparent: true, opacity: 0.55 }, 0.6);
@@ -302,7 +303,15 @@ export function makePerson(o = {}) {
     legR,
     phase: Math.random() * 6,
     holdArms: !!o.holdArms,
+    sit: false, // true なら地べた座り（呼び出し側で全体を 0.5 下げる）
     anim(dt, speed, working = false) {
+      if (this.sit) {
+        this.legL.rotation.x = this.legR.rotation.x = -1.45;
+        this.armL.rotation.x = -0.35;
+        this.armR.rotation.x = -0.35;
+        this.body.position.y = 0;
+        return;
+      }
       const moving = speed > 0.2;
       if (moving) this.phase += dt * (6 + speed * 1.6);
       const amp = moving ? Math.min(1, speed / 3) * 0.7 : 0;
@@ -1352,3 +1361,159 @@ export function buildWorld(scene) {
   });
   return { root, curbRight };
 }
+
+/* ---------- 駐車場・道路・乗り物（車は +z が前） ---------- */
+export const LOT = {
+  x0: -11.2, x1: 14.4, z0: 6.6, z1: 21.0, // 駐車場と道路の土台
+  spotsX: [-9.2, -6.4, -3.6, -0.8, 2.0, 4.8, 7.6, 10.4], // 駐車スペースの中心x
+  pitch: 2.8, // スペースの幅
+  spotZ: 9.9, // 停めたときの車の中心z
+  frontZ: 7.6, // スペースの手前（店側）の縁
+  backZ: 12.2, // スペースの奥の縁
+  aisleZ: 13.4, // 車が走る通路
+  roadZ: 18.4, // 道路（バスが止まる車線）
+  entryX: 18.5, // 道路から入ってくる側
+  exitX: -18.5,
+  busX: -2.0,
+};
+/** 近いスペース間のすきま（人が通る道）のx */
+export const LOT_GAPS = LOT.spotsX.map((x) => x + LOT.pitch / 2);
+
+export function makeCar(kind = 'sedan', color = '#d6453d') {
+  const g = new THREE.Group();
+  const yank = kind === 'yankee';
+  const van = kind === 'van';
+  const kei = kind === 'kei';
+  const W = kei ? 1.55 : 1.8, L = kei ? 3.5 : van ? 4.5 : yank ? 4.4 : 4.2;
+  const bh = yank ? 0.5 : van ? 0.95 : 0.65;
+  const cabH = yank ? 0.42 : van ? 0.8 : 0.58;
+  const glass = '#2a4155';
+  bx(g, [W, bh, L], color, [0, 0.22, 0], { r: 0.12 });
+  if (van) {
+    bx(g, [W - 0.06, cabH, L * 0.82], color, [0, 0.22 + bh, -0.1], { r: 0.1 });
+    bx(g, [W - 0.02, cabH * 0.55, L * 0.8], glass, [0, 0.22 + bh + cabH * 0.22, -0.1], { r: 0.05 });
+  } else {
+    const cl = L * (yank ? 0.42 : 0.5);
+    bx(g, [W - 0.16, cabH, cl], color, [0, 0.22 + bh, -L * 0.06], { r: 0.1 });
+    bx(g, [W - 0.1, cabH * 0.6, cl - 0.12], glass, [0, 0.22 + bh + cabH * 0.18, -L * 0.06], { r: 0.05 });
+    bx(g, [W - 0.2, 0.06, cl - 0.3], color, [0, 0.22 + bh + cabH - 0.02, -L * 0.06], { r: 0.02 });
+  }
+  // ライト
+  const hl = M('#fff7d0', { emissive: '#ffe9a0', emissiveIntensity: 0.9 });
+  const tl = M('#ff4a3d', { emissive: '#d01c10', emissiveIntensity: 0.8 });
+  [-1, 1].forEach((s) => {
+    bx(g, [0.3, 0.14, 0.06], '#fff7d0', [s * (W / 2 - 0.3), 0.5, L / 2 - 0.01], { r: 0.02, material: hl });
+    bx(g, [0.3, 0.12, 0.06], '#ff4a3d', [s * (W / 2 - 0.3), 0.55, -L / 2 + 0.01], { r: 0.02, material: tl });
+  });
+  // タイヤ
+  [[-1, 1.25], [1, 1.25], [-1, -1.25], [1, -1.25]].forEach(([sx, sz]) => {
+    const z = sz * (L / 4.2);
+    const w = cy(g, 0.32, 0.32, 0.24, '#1d2125', [sx * (W / 2 - 0.05), 0, z], 18);
+    w.rotation.z = Math.PI / 2;
+    w.position.y = 0.32;
+  });
+  if (yank) {
+    // 低い車高・大きなウイング・足元のネオン
+    bx(g, [W + 0.1, 0.06, 0.5], '#1b1420', [0, 1.25, -L / 2 + 0.1], { r: 0.01 });
+    [-1, 1].forEach((s) => bx(g, [0.06, 0.4, 0.06], '#1b1420', [s * (W / 2 - 0.2), 0.85, -L / 2 + 0.15], { r: 0.01 }));
+    const neon = new THREE.Mesh(new THREE.PlaneGeometry(W + 0.6, L + 0.5), new THREE.MeshBasicMaterial({ color: '#ff5ad8', transparent: true, opacity: 0.55, depthWrite: false }));
+    neon.rotation.x = -Math.PI / 2;
+    neon.position.y = 0.03;
+    neon.userData.noShadow = true;
+    g.add(neon);
+    bx(g, [0.5, 0.05, 1.0], '#f2f2f2', [0, 0.77, 0.55], { r: 0.01 }); // ボンネットのライン
+  }
+  return { group: g, length: L, width: W };
+}
+
+export function makeBus() {
+  const g = new THREE.Group();
+  const L = 9.4, W = 2.55, H = 3.0;
+  bx(g, [W, H - 0.5, L], '#f4f6f8', [0, 0.5, 0], { r: 0.2 });
+  bx(g, [W + 0.02, 0.5, L - 0.2], '#2f7ff0', [0, 0.5, 0], { r: 0.06 }); // 下の帯
+  bx(g, [W + 0.02, 0.18, L - 0.2], '#1fa463', [0, 1.05, 0], { r: 0.03 });
+  bx(g, [W + 0.03, 0.8, L - 1.2], '#2a4155', [0, 1.55, -0.1], { r: 0.1 }); // 窓の帯
+  bx(g, [W - 0.2, 0.9, 0.05], '#2a4155', [0, 1.5, L / 2 + 0.005], { r: 0.04 }); // フロントガラス
+  bx(g, [W - 0.5, 0.28, 0.05], '#ffe14a', [0, 2.65, L / 2 + 0.01], { r: 0.03 }); // 行先表示
+  const hl = M('#fff7d0', { emissive: '#ffe9a0', emissiveIntensity: 0.9 });
+  [-1, 1].forEach((s) => bx(g, [0.36, 0.2, 0.06], '#fff7d0', [s * (W / 2 - 0.35), 0.75, L / 2 + 0.01], { r: 0.02, material: hl }));
+  [-1, 1].forEach((s) => [3.2, 2.2, -2.5, -3.5].forEach((z) => {
+    const w = cy(g, 0.46, 0.46, 0.3, '#1d2125', [s * (W / 2 - 0.05), 0, z], 20);
+    w.rotation.z = Math.PI / 2;
+    w.position.y = 0.46;
+  }));
+  // 乗降口（左側 = 進行方向に向かって右。ここから降りる）
+  bx(g, [0.05, 1.9, 1.2], '#a8c6d8', [-W / 2 - 0.01, 0.55, 2.6], { r: 0.02 });
+  return { group: g, length: L, width: W };
+}
+
+export function buildLot() {
+  const g = new THREE.Group();
+  const w = LOT.x1 - LOT.x0, d = LOT.z1 - LOT.z0;
+  const cx = (LOT.x0 + LOT.x1) / 2, cz = (LOT.z0 + LOT.z1) / 2;
+  // 土台とアスファルト
+  const slab = new THREE.Mesh(new RoundedBoxGeometry(w, 0.7, d, 2, 0.1), M('#6d7780'));
+  slab.position.set(cx, -0.35, cz);
+  g.add(slab);
+  const asph = canvasTex(256, 256, (c, ww, hh) => {
+    c.fillStyle = '#4b5158';
+    c.fillRect(0, 0, ww, hh);
+    for (let i = 0; i < 900; i++) {
+      const v = 70 + Math.random() * 28;
+      c.fillStyle = `rgba(${v},${v + 3},${v + 8},0.5)`;
+      c.fillRect(Math.random() * ww, Math.random() * hh, 2, 2);
+    }
+  });
+  asph.wrapS = asph.wrapT = THREE.RepeatWrapping;
+  asph.repeat.set(w / 3, d / 3);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(w, d), new THREE.MeshStandardMaterial({ map: asph, roughness: 0.95 }));
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.set(cx, 0.006, cz);
+  floor.receiveShadow = true;
+  g.add(floor);
+  // 駐車スペースの白線・輪止め
+  const line = (x, z, ww, dd, col = '#ecebe4') => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(ww, dd), new THREE.MeshBasicMaterial({ color: col }));
+    m.rotation.x = -Math.PI / 2;
+    m.position.set(x, 0.012, z);
+    m.userData.noShadow = true;
+    g.add(m);
+  };
+  const lz = (LOT.frontZ + LOT.backZ) / 2, ld = LOT.backZ - LOT.frontZ;
+  for (let i = 0; i <= LOT.spotsX.length; i++) {
+    const x = i === 0 ? LOT.spotsX[0] - LOT.pitch / 2 : LOT.spotsX[i - 1] + LOT.pitch / 2;
+    line(x, lz, 0.1, ld);
+  }
+  line((LOT.spotsX[0] + LOT.spotsX[LOT.spotsX.length - 1]) / 2, LOT.backZ, LOT.spotsX[LOT.spotsX.length - 1] - LOT.spotsX[0] + LOT.pitch, 0.1);
+  LOT.spotsX.forEach((x) => bx(g, [1.3, 0.14, 0.2], '#b8bdc2', [x, 0, LOT.frontZ + 0.2], { r: 0.03 }));
+  // 道路：中央線と歩道側の縁
+  for (let x = LOT.x0 + 0.8; x < LOT.x1; x += 2.6) line(x, LOT.roadZ + 1.3, 1.4, 0.14, '#f0c93a');
+  line(cx, LOT.roadZ - 2.2, w, 0.1);
+  // バス停
+  bx(g, [0.1, 2.6, 0.1], '#6b7780', [LOT.busX + 5.8, 0, LOT.roadZ - 2.5], { r: 0.02 });
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 0.7), new THREE.MeshBasicMaterial({ map: signTex('バス停', '#2f7ff0', '#ffffff', 256, 160, 'bold 72px "Yu Gothic UI","Meiryo",sans-serif') }));
+  sign.position.set(LOT.busX + 5.8, 2.5, LOT.roadZ - 2.43);
+  g.add(sign);
+  // 看板：P
+  const pSign = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 1.2), new THREE.MeshBasicMaterial({ map: signTex('P', '#2f7ff0', '#ffffff', 192, 192, 'bold 140px "Yu Gothic UI","Meiryo",sans-serif') }));
+  bx(g, [0.1, 2.2, 0.1], '#6b7780', [LOT.x0 + 0.8, 0, LOT.frontZ - 0.4], { r: 0.02 });
+  pSign.position.set(LOT.x0 + 0.8, 2.5, LOT.frontZ - 0.33);
+  g.add(pSign);
+  // 街灯（夜は光る）
+  const lampMat = new THREE.MeshStandardMaterial({ color: '#fff3c0', emissive: '#ffd96a', emissiveIntensity: 0.15, roughness: 0.4 });
+  [-9.8, -3.2, 3.2, 9.8].forEach((x) => {
+    cy(g, 0.06, 0.08, 4.2, '#59646d', [x, 0, LOT.aisleZ + 1.6], 10);
+    bx(g, [0.7, 0.07, 0.07], '#59646d', [x, 4.15, LOT.aisleZ + 1.6 - 0.3], { r: 0.01 });
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.12, 0.26), lampMat);
+    head.position.set(x, 4.1, LOT.aisleZ + 1.3);
+    g.add(head);
+  });
+  // 植え込み
+  [[LOT.x0 + 0.6, 8.6], [LOT.x1 - 0.6, 8.6], [LOT.x0 + 0.6, 12.8]].forEach(([x, z]) => {
+    bx(g, [0.9, 0.35, 1.8], '#a9a59a', [x, 0, z], { r: 0.05 });
+    [0, 1].forEach((i) => sp(g, 0.42, '#58b368', [x + (i - 0.5) * 0.2, 0.7, z + (i - 0.5) * 0.9], {}, 0.85));
+  });
+  g.traverse((o) => { if (o.isMesh && !o.userData.noShadow && o !== floor) { o.castShadow = true; o.receiveShadow = true; } });
+  return { group: g, lampMat };
+}
+

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import {
   LAYOUT, COLLIDERS, EXP_COLLIDERS, ITEM_BOXES, EXP_WIDTH, KIND_IDS, bx, cy, sp,
-  makeOnigiri, makeSandwich, makeFried, makeBento, makePerson, makeRobot, buildCharger, buildShelf, buildCooker, buildStation, buildTrayStand, buildRegister, buildDoor, buildBackDoor, buildFridge, buildDisplayCase, buildSandTable, buildFryer, buildBentoTable, buildExpansion, buildWorld,
+  makeOnigiri, makeSandwich, makeFried, makeBento, makePerson, makeRobot, buildCharger, makeCar, makeBus, buildLot, LOT, LOT_GAPS, buildShelf, buildCooker, buildStation, buildTrayStand, buildRegister, buildDoor, buildBackDoor, buildFridge, buildDisplayCase, buildSandTable, buildFryer, buildBentoTable, buildExpansion, buildWorld,
 } from './models.js';
 
 /* =====================================================================
@@ -188,7 +188,8 @@ renderer.toneMappingExposure = 1.05;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(30, 1, 1, 300);
-const view = { az: rad(40), el: rad(41), dist: 27, target: new THREE.Vector3(LAYOUT.view.x, 0.3, LAYOUT.view.z) };
+const VIEW_Z = 2.6; // 駐車場まで見えるように、画面の中心を手前（南）へ
+const view = { az: rad(40), el: rad(41), dist: 27, target: new THREE.Vector3(LAYOUT.view.x, 0.3, VIEW_Z) };
 let userZoomed = false;
 let shopSize = 0; // 店の広さ（0=最初 / 1〜4=増築ずみの回数）。1回ごとに右へ 2.5m
 let expanded = false; // 1回以上増築しているか
@@ -202,7 +203,7 @@ const SIZE_WIPE_D = [35, 38, 41, 44, 47];
 function defaultDist() {
   const a = window.innerWidth / window.innerHeight;
   const base = !(a > 0) || a >= 1.75 ? 30.5 : 30.5 * Math.min(1.75 / a, 1.8);
-  return base * SIZE_VIEW_D[shopSize];
+  return base * SIZE_VIEW_D[shopSize] * 1.24;
 }
 view.dist = defaultDist();
 function updateCamera() {
@@ -239,11 +240,11 @@ onResize();
 const hemi = new THREE.HemisphereLight('#ffffff', '#a9b8c4', 1.1);
 scene.add(hemi);
 const sun = new THREE.DirectionalLight('#fff4e0', 2.6);
-sun.position.set(LAYOUT.view.x + 10, 22, LAYOUT.view.z + 14);
-sun.target.position.set(LAYOUT.view.x, 0, LAYOUT.view.z);
+sun.position.set(LAYOUT.view.x + 10, 22, 5 + 14);
+sun.target.position.set(LAYOUT.view.x, 0, 5);
 sun.castShadow = true;
 sun.shadow.mapSize.set(4096, 4096);
-Object.assign(sun.shadow.camera, { left: -14, right: 14, top: 13, bottom: -13, near: 1, far: 80 });
+Object.assign(sun.shadow.camera, { left: -24, right: 24, top: 22, bottom: -22, near: 1, far: 90 });
 sun.shadow.bias = -0.0004;
 sun.shadow.normalBias = 0.04;
 scene.add(sun, sun.target);
@@ -272,6 +273,7 @@ function applyLighting(h, dt = 1) {
   sun.color.copy(lightCur.color);
   sun.intensity = lightCur.sun;
   hemi.intensity = lightCur.hemi;
+  if (typeof lot !== 'undefined') lot.lampMat.emissiveIntensity = 0.15 + 1.6 * clamp((h - 16.5) / 2.5, 0, 1);
 }
 
 /* =====================================================================
@@ -1417,7 +1419,7 @@ function placeOneFrom(c, sh, silent) {
     tier.n++;
     c.oni[k]--;
     refreshShelf(sh);
-    if (!S.opened && !autoOpened) { autoOpened = true; S.opened = true; spawnTimer = 10; toast('開店しました！'); }
+    if (!silent && !S.opened && !autoOpened) { autoOpened = true; S.opened = true; spawnTimer = 10; toast('開店しました！'); }
     return true;
   }
   return false;
@@ -1659,8 +1661,12 @@ const HAIRS = ['#2b2118', '#4a3322', '#7a4a28', '#c9a25a', '#222a3a', '#8c8c94']
 const SKINS = ['#f7d2b0', '#f0c19a', '#e6ad84', '#fbdcc0'];
 /** 出口へ：レジの前などから、障害物をよけて自動ドアの外へ */
 const EXIT_PATH = (c) => {
-  const tail = LAYOUT.exitPath.slice(-2).map((p) => new THREE.Vector3(p.x, 0, p.z));
+  const V = (x, z) => new THREE.Vector3(x, 0, z);
   const mid = c ? findPath(c.pos.x, c.pos.z, LAYOUT.exitPath[1].x, LAYOUT.exitPath[1].z) : [];
+  const tail = [V(LAYOUT.door.xc, 3.7), V(LAYOUT.door.xc, 5.3)];
+  const o = c && c.origin;
+  if (o && c.car && c.car.here) tail.push(V(o.gx, 7.1), V(o.gx, o.z), V(o.x, o.z)); // 車・バスへ戻る
+  else tail.push(V(c && c.walkSide !== undefined && !o ? c.walkSide : (o && o.x < 0 ? -12 : 15.5), 5.4));
   return [...mid, ...tail];
 };
 function chooseKind() {
@@ -1685,11 +1691,15 @@ const STOP_ORDER = ['shelf', 'sand', 'bento', 'hot', 'snack', 'sweet', 'fridge']
 const STOP_CAT = { shelf: 'onigiri', ...Object.fromEntries(DISPLAYS.map((def) => [def.stop, def.cat])) };
 
 class Customer {
-  constructor(shelf) {
+  constructor(shelf, o = {}) {
     this.shelf = shelf;
+    this.car = o.car || null; // 車・バスで来たお客さん（帰りはそこへ戻る）
+    this.origin = o.origin || null;
     this.person = makePerson({ shirt: pick(SHIRTS), pants: pick(PANTS), hair: pick(HAIRS), skin: pick(SKINS) });
     this.person.group.scale.setScalar(rand(0.9, 1.04));
-    this.pos = new THREE.Vector3(LAYOUT.spawn.x + rand(-0.3, 0.3), 0, LAYOUT.spawn.z);
+    // 徒歩：歩道の左右から。車・バス：降りた場所から、車のすきまを通って入口へ
+    this.walkSide = Math.random() < 0.5 ? -12 : 15.5;
+    this.pos = this.origin ? new THREE.Vector3(this.origin.x, 0, this.origin.z) : new THREE.Vector3(this.walkSide, 0, 5.5 + rand(-0.3, 0.3));
     this.person.group.position.copy(this.pos);
     scene.add(this.person.group);
     shadowize(this.person.group);
@@ -1700,7 +1710,11 @@ class Customer {
     this.stopIdx = 0;
     const en = LAYOUT.entryPath;
     const t0 = this.stopTarget(0);
-    this.path = [...en.map((p) => new THREE.Vector3(p.x, 0, p.z)), ...this.pathTo(en[en.length - 1], t0)];
+    const doorFront = new THREE.Vector3(DOOR_X + rand(-0.4, 0.4), 0, 5.3);
+    const outside = this.origin
+      ? [new THREE.Vector3(this.origin.gx, 0, this.origin.z), new THREE.Vector3(this.origin.gx, 0, 7.1), doorFront]
+      : [doorFront];
+    this.path = [...outside, ...en.map((p) => new THREE.Vector3(p.x, 0, p.z)), ...this.pathTo(en[en.length - 1], t0)];
     this.state = 'enter';
     this.timer = 0;
     this.sat = 0; // 希望どおり買えた数
@@ -1933,6 +1947,7 @@ class Customer {
     this.tag.destroy();
     const i = customers.indexOf(this);
     if (i >= 0) customers.splice(i, 1);
+    if (this.car && this.car.here && this.car.passengerHome) this.car.passengerHome(this);
   }
 }
 const WISH_NAME = { shio: '塩', ume: '梅', okaka: 'おかか' };
@@ -1953,12 +1968,363 @@ function rateMult(h) {
 /** レベルが上がるほど客足が増える（Lv.1 は約35秒に1人） */
 function nextSpawnDelay() {
   const levelMult = 1 + 0.4 * (S.level - 1);
-  const mult = rateMult(S.time) * levelMult * val('poster') * (0.4 + S.rep * 0.24);
+  const mult = rateMult(S.time) * levelMult * val('poster') * (0.4 + S.rep * 0.24) * (gangActive() ? 0.35 : 1);
   return (35 / mult) * rand(0.75, 1.25);
 }
+/** 車で来るお客さんの人数（1〜4人） */
+function rollPassengers() {
+  const r = Math.random();
+  return r < 0.5 ? 1 : r < 0.8 ? 2 : r < 0.95 ? 3 : 4;
+}
 function spawnCustomer() {
+  // ヤンキーがたむろしていると、入れずに帰る人が多い
+  if (gangActive() && Math.random() < 0.6) { spawnScared(); return; }
+  if (S.level >= 2 && Math.random() < 0.55) {
+    const spot = pickSpot();
+    if (spot) { new Car(spot, rollPassengers()); return; }
+  }
+  new Customer(pickShelf());
+}
+
+/* =====================================================================
+ *  駐車場・車・バス・ヤンキー
+ * ===================================================================== */
+const lot = buildLot();
+scene.add(lot.group);
+const spots = LOT.spotsX.map((x, i) => ({ i, x, car: null }));
+const cars = []; // 走っている車・停まっている車
+const passersby = []; // 通りすがり（ヤンキーを見て引き返す人）
+let bus = null;
+let gang = null;
+const dayFlags = { bus: [false, false], gang: false };
+const BUS_TIMES = [12.0, 17.5];
+const DOOR_X = LAYOUT.door.xc;
+const LOT_GAP_XS = [LOT.spotsX[0] - LOT.pitch / 2, ...LOT_GAPS];
+const nearestGap = (x) => LOT_GAP_XS.reduce((b, g) => (Math.abs(g - x) < Math.abs(b - x) ? g : b), LOT_GAP_XS[0]);
+const gangActive = () => !!gang && (gang.state === 'walk' || gang.state === 'loiter');
+const outsideBusy = () => cars.length > 0 || !!bus || !!gang || passersby.length > 0;
+
+/** 乗り物：道すじ（{x,z,rev?,speed?}）をたどって走る */
+class Vehicle {
+  constructor(model, x, z, heading) {
+    this.model = model;
+    this.group = model.group;
+    this.x = x; this.z = z; this.h = heading;
+    this.path = [];
+    this.speed = 6;
+    this.group.position.set(x, 0, z);
+    this.group.rotation.y = heading;
+    scene.add(this.group);
+    shadowize(this.group);
+  }
+  drive(dt) {
+    if (!this.path.length) return true;
+    const t = this.path[0];
+    const dx = t.x - this.x, dz = t.z - this.z, d = Math.hypot(dx, dz);
+    if (d < 0.1) { this.path.shift(); return !this.path.length; }
+    const m = Math.min(d, (t.speed || this.speed) * dt);
+    this.x += (dx / d) * m;
+    this.z += (dz / d) * m;
+    const hd = t.rev ? Math.atan2(-dx, -dz) : Math.atan2(dx, dz);
+    this.h = lerpAngle(this.h, hd, 1 - Math.exp(-(t.rev ? 3 : 7) * dt));
+    this.group.position.set(this.x, 0, this.z);
+    this.group.rotation.y = this.h;
+    return false;
+  }
+  dispose() {
+    scene.remove(this.group);
+    this.group.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+  }
+}
+const freeSpots = () => spots.filter((s) => !s.car);
+function pickSpot(nearDoor = false) {
+  const free = freeSpots();
+  if (!free.length) return null;
+  if (nearDoor) return free.reduce((b, s) => (Math.abs(s.x - DOOR_X) < Math.abs(b.x - DOOR_X) ? s : b), free[0]);
+  return pick(free);
+}
+function pickShelf() {
   const stocked = shelves.filter((s) => shelfTotal(s) > 0);
-  new Customer(pick(stocked.length ? stocked : shelves));
+  return pick(stocked.length ? stocked : shelves);
+}
+/** 車のお客さんが降りる／乗る場所の道すじ */
+function carOrigin(x, z) {
+  const sideX = DOOR_X > x ? 1 : -1;
+  return { x: x + sideX * 1.15, z, gx: nearestGap(x + sideX * 1.4) };
+}
+
+class Car extends Vehicle {
+  constructor(spot, n, opt = {}) {
+    const yank = !!opt.yankee;
+    const kind = yank ? 'yankee' : pick(['sedan', 'sedan', 'hatch', 'van', 'kei']);
+    const color = yank ? '#6a2fa8' : pick(['#d6453d', '#2f7ff0', '#e8e8ea', '#3a3f46', '#f2b134', '#58b368', '#8c8c94', '#e88fb4']);
+    super(makeCar(kind, color), LOT.entryX, LOT.aisleZ, -Math.PI / 2);
+    this.spot = spot;
+    if (spot) spot.car = this;
+    this.n = n;
+    this.passengers = [];
+    this.returned = 0;
+    this.state = 'arrive';
+    this.timer = 0;
+    this.here = true;
+    this.hold = !!opt.hold; // true の間は帰らない（ヤンキー用）
+    this.scared = !!opt.scared;
+    this.onPark = opt.onPark || null;
+    this.popped = false;
+    if (this.scared) this.path = [{ x: LOT.exitX, z: LOT.aisleZ, speed: 7 }];
+    else {
+      const sx = spot.x;
+      this.path = [{ x: sx + 2.4, z: LOT.aisleZ }, { x: sx + 1.1, z: LOT.aisleZ - 0.9 }, { x: sx, z: LOT.aisleZ - 2.0 }, { x: sx, z: LOT.spotZ, speed: 3.5 }];
+    }
+    cars.push(this);
+  }
+  update(dt) {
+    switch (this.state) {
+      case 'arrive':
+        if (this.scared && !this.popped && this.x < DOOR_X + 2) { this.popped = true; popup(this.x, 2.4, this.z, '😨', ''); }
+        if (this.drive(dt)) { if (this.scared) this.finish(); else { this.state = 'parked'; this.timer = 0.9; } }
+        break;
+      case 'parked':
+        this.timer -= dt;
+        if (this.timer <= 0) { this.unload(); this.state = 'wait'; this.timer = 220; if (this.onPark) this.onPark(this); }
+        break;
+      case 'wait':
+        if (this.hold) break;
+        this.timer -= dt;
+        if (this.returned >= this.passengers.length || this.timer <= 0) { this.state = 'ready'; this.timer = 1.4; }
+        break;
+      case 'ready':
+        this.timer -= dt;
+        if (this.timer <= 0) {
+          this.here = false; // まだ店にいる人は、歩いて帰る
+          const sx = this.spot.x;
+          this.path = [{ x: sx, z: LOT.aisleZ - 1.6, rev: true, speed: 3 }, { x: sx, z: LOT.aisleZ - 0.6, rev: true, speed: 3 }, { x: sx + 1.4, z: LOT.aisleZ + 0.5, speed: 3 }, { x: LOT.entryX, z: LOT.aisleZ, speed: 6.5 }];
+          this.state = 'leave';
+        }
+        break;
+      case 'leave':
+        if (this.drive(dt)) this.finish();
+        break;
+      default: break;
+    }
+  }
+  unload() {
+    for (let j = 0; j < this.n; j++) {
+      const c = new Customer(pickShelf(), { car: this, origin: carOrigin(this.x, this.z - 0.5 + j * 0.45) });
+      this.passengers.push(c);
+    }
+  }
+  passengerHome() { this.returned++; }
+  finish() {
+    if (this.spot) this.spot.car = null;
+    const i = cars.indexOf(this);
+    if (i >= 0) cars.splice(i, 1);
+    this.dispose();
+  }
+}
+
+class Bus extends Vehicle {
+  constructor(n) {
+    super(makeBus(), LOT.entryX + 6, LOT.roadZ, -Math.PI / 2);
+    this.n = n;
+    this.speed = 5.5;
+    this.spawned = 0;
+    this.passengers = [];
+    this.returned = 0;
+    this.state = 'arrive';
+    this.timer = 0;
+    this.here = true;
+    this.path = [{ x: LOT.busX, z: LOT.roadZ, speed: 5.5 }];
+  }
+  update(dt) {
+    switch (this.state) {
+      case 'arrive':
+        if (this.drive(dt)) { this.state = 'unload'; this.timer = 1.0; toast(`🚌 観光バスが到着！ ${this.n}人のお客さんが降りてくるよ`, 4500); }
+        break;
+      case 'unload':
+        this.timer -= dt;
+        if (this.timer <= 0 && this.spawned < this.n) {
+          const x = LOT.busX - 2.6 + rand(-0.35, 0.35);
+          this.passengers.push(new Customer(pickShelf(), { car: this, origin: { x, z: LOT.roadZ - 1.75, gx: nearestGap(x) } }));
+          this.spawned++;
+          this.timer = 0.45;
+        }
+        if (this.spawned >= this.n) { this.state = 'wait'; this.timer = 160; }
+        break;
+      case 'wait':
+        this.timer -= dt;
+        if (this.returned >= this.passengers.length || this.timer <= 0) { this.state = 'ready'; this.timer = 2.0; }
+        break;
+      case 'ready':
+        this.timer -= dt;
+        if (this.timer <= 0) { this.here = false; this.path = [{ x: LOT.exitX - 6, z: LOT.roadZ, speed: 5.5 }]; this.state = 'leave'; }
+        break;
+      case 'leave':
+        if (this.drive(dt)) { this.dispose(); bus = null; }
+        break;
+      default: break;
+    }
+  }
+  passengerHome() { this.returned++; }
+}
+function startBus() {
+  if (bus) return;
+  const n = clamp(3 + Math.floor(S.level * 0.6), 5, 12);
+  bus = new Bus(n);
+}
+
+/** 夜にたむろするヤンキー：駐車場に車を停めて、入口の前に座り込む。いる間は客足が落ちる */
+const GANG_SPOTS = [{ x: -1.9, z: 5.5 }, { x: -0.7, z: 6.0 }, { x: 0.7, z: 5.5 }, { x: 1.9, z: 6.0 }, { x: -2.8, z: 6.1 }];
+class Gang {
+  constructor(spot) {
+    this.state = 'arrive';
+    this.members = [];
+    this.timer = 0;
+    this.car = new Car(spot, 0, { yankee: true, hold: true, onPark: () => this.arrived() });
+  }
+  arrived() {
+    const looks = [
+      { shirt: '#1b1b22', hair: '#ffd23f', pants: '#2a2f55' }, { shirt: '#5b2d8e', hair: '#e8a317', pants: '#1b1b22' },
+      { shirt: '#c9c9c9', hair: '#2b2118', pants: '#1b1b22' }, { shirt: '#d6453d', hair: '#ffffff', pants: '#2a2f55' },
+    ];
+    const o = carOrigin(this.car.x, this.car.z);
+    looks.forEach((lk, i) => {
+      const person = makePerson({ ...lk, skin: '#f0c19a', pompadour: true, stripe: i % 2 ? '#ffd23f' : null });
+      scene.add(person.group);
+      shadowize(person.group);
+      const g = GANG_SPOTS[i];
+      this.members.push({ person, x: o.x, z: o.z + i * 0.35, gx: o.gx, stage: 0, tx: g.x, tz: g.z, home: { x: o.x, z: o.z + i * 0.35 }, speed: rand(2.0, 2.5), face: Math.PI * 0.9 });
+    });
+    this.state = 'walk';
+    toast('🏍 ヤンキーが駐車場にたむろし始めた…！ お客さんが入りづらくなる', 5000);
+  }
+  /** メンバー1人を、経由点を通って目的地へ歩かせる */
+  stepMember(m, dt, going) {
+    const pts = going
+      ? [{ x: m.gx, z: m.home.z }, { x: m.gx, z: 7.1 }, { x: m.tx, z: m.tz }]
+      : [{ x: m.gx, z: 7.1 }, { x: m.gx, z: m.home.z }, { x: m.home.x, z: m.home.z }];
+    const t = pts[m.stage];
+    if (!t) return true;
+    const dx = t.x - m.x, dz = t.z - m.z, d = Math.hypot(dx, dz);
+    if (d < 0.08) { m.stage++; return m.stage >= pts.length; }
+    const k = Math.min(d, m.speed * dt);
+    m.x += (dx / d) * k;
+    m.z += (dz / d) * k;
+    m.person.sit = false;
+    m.person.anim(dt, m.speed, false);
+    m.person.group.position.set(m.x, 0, m.z);
+    m.person.group.rotation.y = lerpAngle(m.person.group.rotation.y, Math.atan2(dx, dz), 1 - Math.exp(-12 * dt));
+    return false;
+  }
+  update(dt) {
+    if (this.state === 'arrive') return;
+    if (this.state === 'walk') {
+      let done = 0;
+      this.members.forEach((m) => { if (this.stepMember(m, dt, true)) done++; });
+      if (done === this.members.length) { this.state = 'loiter'; this.timer = rand(38, 52); this.members.forEach((m) => { m.person.sit = true; }); }
+    } else if (this.state === 'loiter') {
+      this.members.forEach((m) => {
+        m.person.anim(dt, 0, false);
+        m.person.group.position.set(m.x, -0.5, m.z);
+        m.person.group.rotation.y = lerpAngle(m.person.group.rotation.y, m.face, 1 - Math.exp(-6 * dt));
+      });
+      this.timer -= dt;
+      if (this.timer <= 0 || !S.opened) {
+        this.state = 'back';
+        this.members.forEach((m) => { m.stage = 0; m.person.sit = false; });
+        toast('ヤンキーが帰っていく…', 2500);
+      }
+    } else if (this.state === 'back') {
+      let done = 0;
+      this.members.forEach((m) => {
+        if (m.gone) { done++; return; }
+        if (this.stepMember(m, dt, false)) { m.gone = true; m.person.group.visible = false; done++; }
+      });
+      if (done === this.members.length) { this.state = 'depart'; this.car.hold = false; }
+    } else if (this.state === 'depart') {
+      if (!cars.includes(this.car)) {
+        this.members.forEach((m) => { scene.remove(m.person.group); m.person.group.traverse((o) => { if (o.geometry) o.geometry.dispose(); }); });
+        gang = null;
+      }
+    }
+  }
+}
+function startGang() {
+  if (gang) return;
+  const spot = pickSpot(true);
+  if (!spot) return;
+  gang = new Gang(spot);
+}
+
+/** 通りすがりの人：ヤンキーを見て、入口の手前で引き返す */
+class Passerby {
+  constructor() {
+    this.person = makePerson({ shirt: pick(SHIRTS), pants: pick(PANTS), hair: pick(HAIRS), skin: pick(SKINS) });
+    const side = Math.random() < 0.5 ? -1 : 1;
+    this.sx = side < 0 ? -12 : 15.5;
+    this.x = this.sx;
+    this.z = 5.5 + rand(-0.2, 0.2);
+    this.turnX = DOOR_X + side * rand(3.6, 4.6);
+    this.state = 'in';
+    this.timer = 0;
+    scene.add(this.person.group);
+    shadowize(this.person.group);
+    passersby.push(this);
+  }
+  update(dt) {
+    const target = this.state === 'out' ? this.sx : this.turnX;
+    if (this.state === 'wait') {
+      this.timer -= dt;
+      this.person.anim(dt, 0, false);
+      if (this.timer <= 0) this.state = 'out';
+    } else {
+      const dx = target - this.x;
+      const k = Math.min(Math.abs(dx), 2.4 * dt);
+      this.x += Math.sign(dx) * k;
+      this.person.anim(dt, 2.4, false);
+      this.person.group.rotation.y = lerpAngle(this.person.group.rotation.y, dx > 0 ? Math.PI / 2 : -Math.PI / 2, 1 - Math.exp(-10 * dt));
+      if (Math.abs(dx) < 0.05) {
+        if (this.state === 'in') { this.state = 'wait'; this.timer = 1.0; popup(this.x, 2.3, this.z, '😨', ''); } else { this.dispose(); return; }
+      }
+    }
+    this.person.group.position.set(this.x, 0, this.z);
+  }
+  dispose() {
+    scene.remove(this.person.group);
+    this.person.group.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+    const i = passersby.indexOf(this);
+    if (i >= 0) passersby.splice(i, 1);
+  }
+}
+/** ヤンキーがいるせいで、入れずに帰ったお客さん */
+function spawnScared() {
+  S.stats.lost++;
+  if (Math.random() < 0.5) new Car(null, 0, { scared: true });
+  else new Passerby();
+}
+
+function updateOutside(dt) {
+  [...cars].forEach((c) => c.update(dt));
+  if (bus) bus.update(dt);
+  if (gang) gang.update(dt);
+  [...passersby].forEach((p) => p.update(dt));
+  if (!S.opened) return;
+  // 出来事：バス（昼と夕方）、ヤンキー（夜）
+  if (S.level >= 7) {
+    BUS_TIMES.forEach((t, i) => {
+      if (dayFlags.bus[i] || S.time < t) return;
+      dayFlags.bus[i] = true;
+      if (S.time < t + 1.2) startBus();
+    });
+  }
+  if (S.level >= 8 && !dayFlags.gang && S.time >= 19.2) {
+    dayFlags.gang = true;
+    if (Math.random() < 0.75) startGang();
+  }
+}
+function resetDayEvents() {
+  dayFlags.bus = [false, false];
+  dayFlags.gang = false;
 }
 
 /* =====================================================================
@@ -2586,6 +2952,7 @@ function endDay() {
   nextDay();
 }
 function nextDay() {
+  resetDayEvents();
   S.day++;
   S.time = DAY_START;
   S.stats = { sales: 0, customers: 0, lost: 0 };
@@ -2705,7 +3072,7 @@ canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
   if (!started || craft.active || shelfMode.active || paused) return;
   userZoomed = true;
-  view.dist = clamp(view.dist * Math.exp(e.deltaY * 0.001), 10, 50);
+  view.dist = clamp(view.dist * Math.exp(e.deltaY * 0.001), 10, 70);
 }, { passive: false });
 
 const clickMark = new THREE.Mesh(new THREE.RingGeometry(0.15, 0.22, 24), new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0, depthWrite: false }));
@@ -2847,11 +3214,13 @@ function updateWorld(dt) {
   if (S.opened) {
     spawnTimer -= dt;
     if (spawnTimer <= 0) {
-      if (customers.length < Math.min(9, 2 + S.level)) spawnCustomer();
+      const incoming = cars.reduce((a, c) => a + (c.state === 'arrive' || c.state === 'parked' ? c.n : 0), 0);
+      if (customers.length + incoming < Math.min(9, 2 + S.level)) spawnCustomer();
       spawnTimer = nextSpawnDelay();
     }
   }
   [...customers].forEach((c) => c.update(dt));
+  updateOutside(dt);
   updateDeliveries(dt);
 
   // 自動ドア
@@ -3216,10 +3585,10 @@ function updateMarker(mk, state) {
   tag.force = state === 'sel' || state === 'hover';
   tag.set({ chip: it.name + lvTxt, tone: state === 'sel' ? (edit.check.ok ? 'good' : 'warn') : '' });
 }
-const canEdit = () => started && !S.opened && customers.length === 0 && couriers.length === 0 && !craft.active && !shelfMode.active && !paused;
+const canEdit = () => started && !S.opened && customers.length === 0 && couriers.length === 0 && !outsideBusy() && !craft.active && !shelfMode.active && !paused;
 function editBlockReason() {
   if (S.opened) return '店を閉めてから編集できるよ';
-  if (customers.length || couriers.length) return 'お客さんや配達員がいなくなったら編集できるよ';
+  if (customers.length || couriers.length || outsideBusy()) return 'お客さん・車・配達員がいなくなったら編集できるよ';
   return '';
 }
 function enterEdit() {
@@ -3392,6 +3761,7 @@ function updateEdit() {
 let autoOpened = false; // はじめて棚に並べたとき、自動で開店するのは1回だけ
 function openShop() {
   if (S.opened) return;
+  autoOpened = true;
   S.opened = true;
   spawnTimer = 6;
   toast('開店しました！');
@@ -3399,6 +3769,7 @@ function openShop() {
 }
 function closeShop() {
   if (!S.opened) return;
+  autoOpened = true;
   S.opened = false;
   toast('閉店しました。お客さんが帰ったら、レイアウトを編集できます', 3500);
   save();
@@ -3549,4 +3920,4 @@ showMenu('main');
 
 loop();
 // 動作確認用
-window.__game = { frame, fpsCam, shelfMode, DISPLAYS, workers, buyRobot, upgradeRobot, buyCharger, edit, ITEMS, enterEdit, exitEdit, openShop, closeShop, placementCheck, pickItem, placeSel, rotateSel, setItemPose, relayout, updateEdit, endDay, makers, sandCase, hotCase, S, stations, shelves, cooker, stn, customers, queue, player, view, craft, carry, fridge, addExp, findPath };
+window.__game = { frame, fpsCam, shelfMode, DISPLAYS, workers, buyRobot, upgradeRobot, buyCharger, cars, passersby, getBus: () => bus, getGang: () => gang, startBus, startGang, dayFlags, edit, ITEMS, enterEdit, exitEdit, openShop, closeShop, placementCheck, pickItem, placeSel, rotateSel, setItemPose, relayout, updateEdit, endDay, makers, sandCase, hotCase, S, stations, shelves, cooker, stn, customers, queue, player, view, craft, carry, fridge, addExp, findPath };
