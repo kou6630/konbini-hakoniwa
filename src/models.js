@@ -327,6 +327,181 @@ export function makePerson(o = {}) {
   return person;
 }
 
+/* ---------- ロボット店員（makePerson と同じ使い方：group / body / hold / holdArms / anim） ---------- */
+export function makeRobot(o = {}) {
+  const col = o.color || '#2f7ff0';
+  const g = new THREE.Group();
+  const body = new THREE.Group();
+  g.add(body);
+
+  // 走行部（タイヤ）
+  bx(g, [0.66, 0.16, 0.5], '#3a4349', [0, 0.08, 0], { r: 0.06 });
+  const mkWheel = (x) => {
+    const w = new THREE.Group();
+    w.position.set(x, 0.14, 0);
+    g.add(w);
+    const m = cy(w, 0.14, 0.14, 0.12, '#1d2327', [0, -0.06, 0], 20);
+    m.rotation.z = Math.PI / 2;
+    sp(w, 0.05, '#9aa6ad', [x > 0 ? 0.07 : -0.07, 0, 0]);
+    return w;
+  };
+  const legL = mkWheel(-0.36);
+  const legR = mkWheel(0.36);
+
+  // 胴体
+  bx(body, [0.62, 0.52, 0.44], col, [0, 0.2, 0], { r: 0.1 });
+  bx(body, [0.4, 0.26, 0.04], '#1b2429', [0, 0.36, 0.22], { r: 0.02 }); // 胸のパネル
+  const lampMats = [0, 1, 2].map((i) => {
+    const m = new THREE.MeshStandardMaterial({ color: '#333', emissive: '#000', roughness: 0.4 });
+    const l = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.1, 0.03), m);
+    l.position.set(-0.11 + i * 0.11, 0.49, 0.245);
+    body.add(l);
+    return m;
+  });
+  const pips = new THREE.Group(); // レベルの印（金のドット）
+  body.add(pips);
+  const apron = bx(body, [0.5, 0.08, 0.03], '#e9eef1', [0, 0.24, 0.225], { r: 0.01 });
+  void apron;
+
+  // 頭
+  const head = new THREE.Group();
+  head.position.y = 0.88;
+  body.add(head);
+  bx(head, [0.54, 0.4, 0.42], '#eef2f5', [0, -0.2, 0], { r: 0.12 });
+  bx(head, [0.44, 0.24, 0.03], '#10202a', [0, -0.28, 0.215], { r: 0.02 });
+  const eyeMat = new THREE.MeshStandardMaterial({ color: '#66f0ff', emissive: '#33d8ee', roughness: 0.3 });
+  [-0.1, 0.1].forEach((x) => {
+    const e = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.1, 0.03), eyeMat);
+    e.position.set(x, -0.2, 0.235);
+    head.add(e);
+  });
+  cy(head, 0.015, 0.015, 0.2, '#6b767d', [0, 0.2, 0], 8);
+  const bulbMat = new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.8, roughness: 0.3 });
+  const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.05, 12, 10), bulbMat);
+  bulb.position.set(0, 0.42, 0);
+  head.add(bulb);
+  if (o.cap) {
+    cy(head, 0.2, 0.22, 0.07, '#ffffff', [0, 0.0, 0], 20);
+    bx(head, [0.34, 0.025, 0.16], '#ffffff', [0, 0.0, 0.24], { r: 0.01 });
+  }
+
+  // 腕
+  const mkArm = (x) => {
+    const p = new THREE.Group();
+    p.position.set(x, 0.62, 0);
+    body.add(p);
+    bx(p, [0.12, 0.4, 0.12], '#c9d2d8', [0, -0.4, 0], { r: 0.04 });
+    sp(p, 0.075, '#4b565d', [0, -0.42, 0]);
+    sp(p, 0.06, col, [0, 0, 0]);
+    return p;
+  };
+  const armL = mkArm(-0.38);
+  const armR = mkArm(0.38);
+
+  const hold = new THREE.Group();
+  hold.position.set(0, 0.5, 0.42);
+  body.add(hold);
+
+  let lv = 0;
+  const robot = {
+    group: g,
+    body,
+    hold,
+    armL,
+    armR,
+    legL,
+    legR,
+    phase: Math.random() * 6,
+    holdArms: false,
+    setLevel(n) {
+      if (n === lv && pips.children.length) return;
+      lv = n;
+      pips.children.slice().forEach((c) => { pips.remove(c); c.geometry.dispose(); });
+      for (let i = 0; i <= n; i++) {
+        const d = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 6), M('#ffd23f', { emissive: '#a07800', emissiveIntensity: 0.6 }));
+        d.position.set(-0.04 * n + i * 0.08, 0.24, 0.245);
+        pips.add(d);
+      }
+    },
+    /** 電池の残り(0〜1)。胸のランプと目の色が変わる */
+    setBattery(f, dead = false) {
+      const on = f > 0.66 ? 3 : f > 0.33 ? 2 : f > 0.02 ? 1 : 0;
+      const c = f > 0.33 ? '#38e07b' : f > 0.12 ? '#ffb020' : '#ff4a3d';
+      lampMats.forEach((m, i) => {
+        m.color.set(i < on ? c : '#333');
+        m.emissive.set(i < on ? c : '#000');
+      });
+      const e = dead ? '#ff4a3d' : '#33d8ee';
+      eyeMat.color.set(dead ? '#ff7a70' : '#66f0ff');
+      eyeMat.emissive.set(e);
+    },
+    /** 電源が入っていない（充電スポットがない）ときは目を消す */
+    setPower(on) {
+      eyeMat.emissiveIntensity = on ? 1 : 0.05;
+      bulbMat.emissiveIntensity = on ? 0.8 : 0.05;
+    },
+    anim(dt, speed, working = false) {
+      const moving = speed > 0.2;
+      if (moving) this.phase += dt * (6 + speed * 1.6);
+      if (moving) { legL.rotation.x += dt * speed * 3; legR.rotation.x += dt * speed * 3; }
+      if (working) {
+        this.phase += dt * 14;
+        armL.rotation.x = -0.9 + Math.sin(this.phase) * 0.35;
+        armR.rotation.x = -0.9 - Math.sin(this.phase) * 0.35;
+      } else if (this.holdArms) {
+        armL.rotation.x = -0.7;
+        armR.rotation.x = -0.7;
+      } else {
+        const amp = moving ? Math.min(1, speed / 3) * 0.25 : 0;
+        armL.rotation.x = -Math.sin(this.phase) * amp;
+        armR.rotation.x = Math.sin(this.phase) * amp;
+      }
+      body.position.y = moving ? Math.abs(Math.sin(this.phase * 0.7)) * 0.03 : 0;
+      head.rotation.z = moving ? Math.sin(this.phase * 0.5) * 0.03 : 0;
+    },
+  };
+  robot.setLevel(0);
+  robot.setBattery(1);
+  return robot;
+}
+
+/* ---------- 充電スポット（床に置く充電パッド） ---------- */
+export function buildCharger() {
+  const g = new THREE.Group();
+  bx(g, [0.7, 0.05, 0.7], '#2b363d', [0, 0, 0], { r: 0.03 });
+  const ringMat = new THREE.MeshStandardMaterial({ color: '#f5c518', emissive: '#c99a00', emissiveIntensity: 0.5, roughness: 0.4 });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.24, 0.3, 40), ringMat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.056;
+  g.add(ring);
+  const tex = canvasTex(128, 128, (c, w, h) => {
+    c.clearRect(0, 0, w, h);
+    c.fillStyle = '#ffe14a';
+    c.beginPath();
+    c.moveTo(w * 0.58, h * 0.1);
+    c.lineTo(w * 0.28, h * 0.56);
+    c.lineTo(w * 0.47, h * 0.56);
+    c.lineTo(w * 0.4, h * 0.9);
+    c.lineTo(w * 0.72, h * 0.42);
+    c.lineTo(w * 0.53, h * 0.42);
+    c.closePath();
+    c.fill();
+  });
+  const boltMat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false });
+  const bolt = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.3), boltMat);
+  bolt.rotation.x = -Math.PI / 2;
+  bolt.position.y = 0.058;
+  g.add(bolt);
+  return {
+    group: g,
+    setCharging(on) {
+      ringMat.color.set(on ? '#38e07b' : '#f5c518');
+      ringMat.emissive.set(on ? '#1fb85c' : '#c99a00');
+      ringMat.emissiveIntensity = on ? 1.1 : 0.5;
+    },
+  };
+}
+
 /* ---------- 棚（おにぎり冷蔵ケース） ---------- */
 export const KIND_IDS = ['shio', 'ume', 'okaka', 'sake', 'tuna'];
 export function buildShelf() {

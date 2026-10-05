@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import {
   LAYOUT, COLLIDERS, SHELF_COLLIDERS, EXP_COLLIDERS, UNLOCK_COLLIDERS, KIND_IDS, bx, cy, sp,
-  makeOnigiri, makeSandwich, makeFried, makeBento, makePerson, buildShelf, buildCooker, buildStation, buildTrayStand, buildRegister, buildDoor, buildBackDoor, buildFridge, buildDisplayCase, buildSandTable, buildFryer, buildBentoTable, buildExpansion, buildWorld,
+  makeOnigiri, makeSandwich, makeFried, makeBento, makePerson, makeRobot, buildCharger, buildShelf, buildCooker, buildStation, buildTrayStand, buildRegister, buildDoor, buildBackDoor, buildFridge, buildDisplayCase, buildSandTable, buildFryer, buildBentoTable, buildExpansion, buildWorld,
 } from './models.js';
 
 /* =====================================================================
@@ -119,7 +119,9 @@ const defaultState = () => ({
   up: { shelfCap: 0, cooker: 0, craft: 0, carry: 0, poster: 0 },
   inv: { rice: 8, salt: 8, ume: 0, okaka: 0, water: 0, bread: 0, egg: 0, tea: 0, chicken: 0, hamslice: 0, potato: 0, coffee: 0, sake: 0, tuna: 0, chips: 0, choco: 0, pudding: 0, cream: 0 },
   pending: [],
-  staff: {}, // 雇っているアルバイト { role: true }
+  staff: {}, // 買ったロボット { role: true }
+  robLv: {}, // ロボットのレベル { role: 0〜4 }
+  chargers: 0, // 買った充電スポットの数
   tiers: ['shio', 'shio', 'shio', 'shio'], // 棚の各段（上から）に置くおにぎり
   stats: { sales: 0, customers: 0, lost: 0 },
 });
@@ -139,6 +141,9 @@ function readSlot(n) {
         stats: { ...d.stats, ...j.s.stats }, pending: Array.isArray(j.s.pending) ? j.s.pending : [], opened: false,
         // 以前の「レジ係を雇う」アップグレードは、アルバイト（レジ係）に引き継ぐ
         staff: { ...(j.s.staff || {}), cashier: !!((j.s.staff && j.s.staff.cashier) || (j.s.up && j.s.up.cashier > 0)) },
+        robLv: { ...(j.s.robLv || {}) },
+        // 以前のアルバイトはロボットに引き継ぐ（充電スポットを1つ進呈）
+        chargers: typeof j.s.chargers === 'number' ? j.s.chargers : (Object.values(j.s.staff || {}).some(Boolean) ? 1 : 0),
         tiers: Array.isArray(j.s.tiers) && j.s.tiers.length === 4 && j.s.tiers.every((k) => KINDS[k]) ? j.s.tiers : d.tiers,
       };
     }
@@ -419,8 +424,8 @@ const makers = {
   bento: { id: 'bento', name: '弁当台', icon: '🍱', lv: 9, color: '#8a5a35', model: bentoTableModel, use: LAYOUT.bentoTable.use, display: bentoCase, state: 'idle', recipe: null, t: 0, out: [] },
 };
 
-// 店員（雇用時）
-const staff = makePerson({ shirt: '#2f7ff0', apron: '#ffffff', stripe: '#1fa463', cap: '#2f7ff0', hair: '#6b3f25', skin: '#f2c9a5' });
+// レジロボ（購入時）
+const staff = makeRobot({ color: '#2f7ff0', cap: true });
 staff.group.position.set(LAYOUT.register.staff.x, 0, LAYOUT.register.staff.z);
 staff.group.rotation.y = Math.PI / 2;
 scene.add(staff.group);
@@ -1019,7 +1024,7 @@ addStation({
   prompt() { return frontCustomer() && !reg.serving ? 'レジを打つ' : null; },
   act() {
     const c = frontCustomer();
-    if (c && !reg.serving) { reg.serving = c; reg.t = 0; c.state = 'serving'; }
+    if (c && !reg.serving) { reg.serving = c; reg.t = 0; reg.byBot = false; c.state = 'serving'; }
   },
 }, '#2f7ff0');
 
@@ -1949,22 +1954,32 @@ function updateDeliveries(dt) {
 }
 
 /* =====================================================================
- *  アルバイト
+ *  ロボット（買い切り。充電スポットがないと動かない）
  * ===================================================================== */
 const ROLES = {
-  cashier: { name: 'レジ係', desc: 'お客さんが会計を待っていたら、自動でレジを打つ', lv: 1, hire: 2000, wage: 120 },
-  cook: { name: '炊飯係', desc: 'ごはんを炊いて、握り台まで運ぶ', lv: 2, hire: 2500, wage: 150 },
-  maker: { name: '握り係', desc: '握り台でおにぎりを握り、トレーに置く（棚の段の設定に合わせる）', lv: 3, hire: 3500, wage: 200 },
-  stocker: { name: '品出し係', desc: 'トレーや調理台の商品を売り場に並べ、飲み物・お菓子・スイーツも補充する', lv: 4, hire: 3000, wage: 200 },
-  kitchen: { name: '厨房係', desc: 'サンドイッチ台・揚げ物台・弁当台で、足りなくなった商品を作る', lv: 5, hire: 4000, wage: 250 },
+  cashier: { name: 'レジロボ', desc: 'お客さんが会計を待っていたら、自動でレジを打つ', lv: 1, price: 5000 },
+  cook: { name: '炊飯ロボ', desc: 'ごはんを炊いて、握り台まで運ぶ', lv: 2, price: 6000 },
+  maker: { name: '握りロボ', desc: '握り台でおにぎりを握り、トレーに置く（棚の段の設定に合わせる）', lv: 3, price: 8000 },
+  stocker: { name: '品出しロボ', desc: 'トレーや調理台の商品を売り場に並べ、飲み物・お菓子・スイーツも補充する', lv: 4, price: 7000 },
+  kitchen: { name: '厨房ロボ', desc: 'サンドイッチ台・揚げ物台・弁当台で、足りなくなった商品を作る', lv: 5, price: 9000 },
 };
 const ROLE_IDS = ['cashier', 'cook', 'maker', 'stocker', 'kitchen'];
+const ROBOT_LV = [ // spd = 動きと作業の速さ、bat = 電池が持つ秒数
+  { spd: 1, bat: 100 }, { spd: 1.25, bat: 130 }, { spd: 1.5, bat: 170 }, { spd: 1.8, bat: 220 }, { spd: 2.2, bat: 300 },
+];
+const ROBOT_UP_COST = [2000, 4000, 8000, 16000];
+const CHARGER_SPOTS = [{ x: -6.5, z: 1.95 }, { x: -5.7, z: 1.95 }, { x: -6.5, z: 2.7 }, { x: -5.7, z: 2.7 }];
+const CHARGER_COSTS = [1500, 2500, 4000, 6000];
+const CHARGE_SEC = 12; // 空から満タンまで
+const LOW_BATTERY = 0.18;
 const hasStaff = (r) => !!S.staff[r];
+const robLv = (r) => Math.min(ROBOT_LV.length - 1, S.robLv[r] || 0);
+const robotOn = (r) => hasStaff(r) && S.chargers > 0;
 const WORKER_LOOK = {
-  cook: { shirt: '#f2a33a', cap: '#f2a33a', hair: '#4a3322' },
-  maker: { shirt: '#8d6ae0', cap: '#8d6ae0', hair: '#2b2118' },
-  stocker: { shirt: '#2f7ff0', cap: '#2f7ff0', hair: '#7a4a28' },
-  kitchen: { shirt: '#e86a5c', cap: '#ffffff', hair: '#222a3a' },
+  cook: { color: '#f2a33a' },
+  maker: { color: '#8d6ae0' },
+  stocker: { color: '#2f7ff0' },
+  kitchen: { color: '#e86a5c' },
 };
 const WORKER_HOME = {
   cook: { x: -4.4, z: 0.6 },
@@ -1973,12 +1988,20 @@ const WORKER_HOME = {
   kitchen: { x: -4.3, z: -4.3 },
 };
 const workers = [];
-/** 動き回るアルバイト。やることを「手順（行く・する・待つ）」の列にして、順に実行する */
+const chargerModels = CHARGER_SPOTS.map((p) => {
+  const c = buildCharger();
+  c.group.position.set(p.x, 0, p.z);
+  c.group.visible = false;
+  scene.add(c.group);
+  return c;
+});
+const cashierTag = new Tag().at(LAYOUT.register.staff.x, 1.75, LAYOUT.register.staff.z);
+/** 動き回るロボット。やることを「手順（行く・する・待つ）」の列にして、順に実行する */
 class Worker {
   constructor(role) {
     this.role = role;
     const look = WORKER_LOOK[role];
-    this.person = makePerson({ shirt: look.shirt, apron: '#ffffff', stripe: '#ffffff', cap: look.cap, hair: look.hair, pants: '#37474f' });
+    this.person = makeRobot({ color: look.color, cap: role === 'kitchen' });
     const h = WORKER_HOME[role];
     this.home = h;
     this.pos = new THREE.Vector3(h.x, 0, h.z);
@@ -1992,6 +2015,10 @@ class Worker {
     this.facing = Math.PI / 2;
     this.working = false;
     this.think = 0.6;
+    this.battery = 1;
+    this.mode = null; // null | 'toCharge' | 'charging'
+    this.pad = -1;
+    this.spd = 1;
     this.tag = new Tag().set({ chip: ROLES[role].name });
   }
   refreshHold() {
@@ -2003,34 +2030,89 @@ class Worker {
   }
   go(p) { return { go: p }; }
   setSteps(list) { this.steps = list; }
+  /** 経路の先へ進む（進んだ速さを返す） */
+  walk(dt, mul) {
+    if (!this.path.length) return 0;
+    const t = this.path[0];
+    const dx = t.x - this.pos.x, dz = t.z - this.pos.z;
+    const d = Math.hypot(dx, dz);
+    if (d < 0.1) { this.path.shift(); return 0; }
+    const v = 2.8 * this.spd * mul;
+    const m = Math.min(d, v * dt);
+    this.pos.x += (dx / d) * m;
+    this.pos.z += (dz / d) * m;
+    this.facing = Math.atan2(dx, dz);
+    return Math.min(v, 4);
+  }
+  stopCharging() {
+    this.pad = -1;
+    this.mode = null;
+  }
+  /** 空いている充電スポットへ向かう（なければ今の仕事を続ける） */
+  goCharge() {
+    let idx = -1;
+    for (let i = 0; i < S.chargers; i++) {
+      if (!workers.some((w) => w !== this && w.pad === i)) { idx = i; break; }
+    }
+    if (idx < 0) return;
+    this.pad = idx;
+    this.mode = 'toCharge';
+    this.steps = [];
+    this.cur = null;
+    this.path = findPath(this.pos.x, this.pos.z, CHARGER_SPOTS[idx].x, CHARGER_SPOTS[idx].z);
+  }
   update(dt) {
     this.working = false;
+    const lvI = robLv(this.role);
+    const L = ROBOT_LV[lvI];
+    this.spd = L.spd;
+    const powered = S.chargers > 0;
+    this.person.setLevel(lvI);
+    this.person.setPower(powered);
     let sp2 = 0;
-    if (this.path.length) {
-      const t = this.path[0];
-      const dx = t.x - this.pos.x, dz = t.z - this.pos.z;
-      const d = Math.hypot(dx, dz);
-      if (d < 0.1) this.path.shift();
+    if (!powered) {
+      if (this.mode) this.stopCharging();
+    } else {
+      if (this.mode === 'charging') {
+        this.battery = Math.min(1, this.battery + dt / CHARGE_SEC);
+        if (this.battery >= 1) this.stopCharging();
+      } else if (this.mode === null && this.battery < LOW_BATTERY) this.goCharge();
+      if (this.mode === 'charging') {
+        const p = CHARGER_SPOTS[this.pad];
+        this.pos.x += (p.x - this.pos.x) * Math.min(1, dt * 8);
+        this.pos.z += (p.z - this.pos.z) * Math.min(1, dt * 8);
+        this.facing = Math.PI / 2;
+      } else if (this.mode === 'toCharge') {
+        sp2 = this.walk(dt, this.battery <= 0 ? 0.35 : 1);
+        if (!this.path.length) {
+          const p = CHARGER_SPOTS[this.pad];
+          if (Math.hypot(p.x - this.pos.x, p.z - this.pos.z) < 1.2) this.mode = 'charging';
+          else { this.path = findPath(this.pos.x, this.pos.z, p.x, p.z); if (!this.path.length) this.stopCharging(); }
+        }
+      } else if (this.battery <= 0) {
+        this.goCharge(); // 電池切れ：空きが出るまでその場で待つ
+      } else if (this.path.length) sp2 = this.walk(dt, 1);
+      else if (this.cur) this.runStep(dt);
       else {
-        const m = Math.min(d, 2.8 * dt);
-        this.pos.x += (dx / d) * m;
-        this.pos.z += (dz / d) * m;
-        this.facing = Math.atan2(dx, dz);
-        sp2 = 2.8;
+        this.cur = this.steps.shift() || null;
+        if (!this.cur) {
+          this.think -= dt * this.spd;
+          if (this.think <= 0) { this.think = 0.8; this.decide(); }
+        }
       }
-    } else if (this.cur) this.runStep(dt);
-    else {
-      this.cur = this.steps.shift() || null;
-      if (!this.cur) {
-        this.think -= dt;
-        if (this.think <= 0) { this.think = 0.8; this.decide(); }
-      }
+      if (this.mode !== 'charging' && (sp2 > 0 || this.working)) this.battery = Math.max(0, this.battery - dt / L.bat);
     }
     const g = this.person.group;
     g.position.copy(this.pos);
     g.rotation.y = lerpAngle(g.rotation.y, this.facing, 1 - Math.exp(-12 * dt));
     this.person.anim(dt, sp2, this.working && sp2 === 0);
-    this.tag.at(this.pos.x, 2.1, this.pos.z);
+    this.person.setBattery(this.battery, powered && this.battery <= 0);
+    this.tag.at(this.pos.x, 1.85, this.pos.z);
+    const nm = ROLES[this.role].name;
+    if (!powered) this.tag.set({ chip: `${nm} ⚡充電スポットなし`, tone: 'warn' });
+    else if (this.mode === 'charging') this.tag.set({ chip: `${nm} 🔋充電中`, bar: q40(this.battery), tone: 'good' });
+    else if (this.battery <= 0) this.tag.set({ chip: `${nm} 電池切れ…`, tone: 'warn' });
+    else this.tag.set(this.battery < 0.6 ? { chip: `${nm} Lv.${lvI + 1}`, bar: q40(this.battery) } : { chip: `${nm} Lv.${lvI + 1}` });
   }
   runStep(dt) {
     const s = this.cur;
@@ -2043,7 +2125,7 @@ class Worker {
       try { s.act(this); } catch (e) { /* ignore */ }
       this.cur = null;
     } else if (s.wait !== undefined) {
-      s.wait -= dt;
+      s.wait -= dt * this.spd;
       this.working = true;
       if (s.wait <= 0) this.cur = null;
     } else if (s.until) {
@@ -2166,52 +2248,62 @@ class Worker {
     this.tag.destroy();
   }
 }
-/** 雇っている人に合わせて、アルバイトを出す／下げる */
+/** 買ったロボットに合わせて、ロボットを出す／下げる */
 function syncWorkers() {
   staff.group.visible = hasStaff('cashier');
+  staff.setLevel(robLv('cashier'));
   for (let i = workers.length - 1; i >= 0; i--) {
     if (!hasStaff(workers[i].role)) { workers[i].dispose(); workers.splice(i, 1); }
   }
   ROLE_IDS.forEach((r) => {
     if (r !== 'cashier' && hasStaff(r) && !workers.some((w) => w.role === r)) workers.push(new Worker(r));
   });
+  chargerModels.forEach((c, i) => { c.group.visible = i < S.chargers; });
 }
-function hireStaff(role) {
+function buyRobot(role) {
   const r = ROLES[role];
-  if (S.level < r.lv) return rest(`Lv.${r.lv} から雇えるよ`);
+  if (S.level < r.lv) return rest(`Lv.${r.lv} から買えるよ`);
   if (hasStaff(role)) return;
-  if (S.money < r.hire) return rest('お金が足りない…');
-  S.money -= r.hire;
+  if (S.money < r.price) return rest('お金が足りない…');
+  S.money -= r.price;
   S.staff[role] = true;
+  S.robLv[role] = 0;
   syncWorkers();
-  toast(`${r.name}を雇った！（給料 ${yen(r.wage)}/日）`);
+  toast(S.chargers > 0 ? `${r.name}を購入！` : `${r.name}を購入！ 充電スポットを買わないと動かないよ`, 3500);
+  popup(player.pos.x, 2.2, player.pos.z, `−${yen(r.price)}`, 'red');
   save();
   shopDirty = true;
 }
-function fireStaff(role) {
+function upgradeRobot(role) {
   if (!hasStaff(role)) return;
-  S.staff[role] = false;
+  const lv = robLv(role);
+  if (lv >= ROBOT_UP_COST.length) return;
+  const cost = ROBOT_UP_COST[lv];
+  if (S.money < cost) return rest('お金が足りない…');
+  S.money -= cost;
+  S.robLv[role] = lv + 1;
   syncWorkers();
-  toast(`${ROLES[role].name}に辞めてもらった`);
+  toast(`${ROLES[role].name} が Lv.${lv + 2} になった！`);
+  popup(player.pos.x, 2.2, player.pos.z, `−${yen(cost)}`, 'red');
   save();
   shopDirty = true;
 }
-/** 1日の終わりに給料を払う（払えないと辞めてしまう） */
-function payWages() {
-  let total = 0;
-  ROLE_IDS.forEach((r) => {
-    if (!hasStaff(r)) return;
-    const w = ROLES[r].wage;
-    if (S.money >= w) { S.money -= w; total += w; } else {
-      S.staff[r] = false;
-      toast(`${ROLES[r].name}は給料をもらえず、辞めてしまった…`, 4000);
-    }
-  });
-  if (total > 0) { popup(player.pos.x, 2.4, player.pos.z, `給料 −${yen(total)}`, 'red'); }
+function buyCharger() {
+  if (S.chargers >= CHARGER_COSTS.length) return;
+  const cost = CHARGER_COSTS[S.chargers];
+  if (S.money < cost) return rest('お金が足りない…');
+  S.money -= cost;
+  S.chargers++;
   syncWorkers();
+  toast('充電スポットを設置！（バックヤードの壁ぎわ）');
+  popup(player.pos.x, 2.2, player.pos.z, `−${yen(cost)}`, 'red');
+  save();
   shopDirty = true;
 }
-function updateWorkers(dt) { workers.forEach((w) => w.update(dt)); }
+function updateWorkers(dt) {
+  chargerModels.forEach((c, i) => c.setCharging(workers.some((w) => w.mode === 'charging' && w.pad === i)));
+  workers.forEach((w) => w.update(dt));
+}
 
 /* =====================================================================
  *  アップグレード / ショップ / 注文 UI
@@ -2258,16 +2350,33 @@ function renderShop() {
       <div class="d">${u.desc}：${cur}${nxt}</div></div>
       <button class="btn green" data-id="${u.id}" ${maxed || S.money < u.costs[lv] ? 'disabled' : ''}>${maxed ? '購入済み' : yen(u.costs[lv])}</button></div>`;
   }
-  h += '<h2 style="margin-top:14px">🧑‍🍳 アルバイト</h2><div class="note">雇うと、1日の終わりに給料がかかります。払えないと辞めてしまいます。</div>';
+  h += '<h2 style="margin-top:14px">🤖 ロボット（買い切り）</h2><div class="note">給料はありません。ただし<b>充電スポットがないと動きません</b>。電池が減ると、空いている充電スポットへ自分で充電に行きます。</div>';
   ROLE_IDS.forEach((r) => {
     const ro = ROLES[r];
     const locked = S.level < ro.lv;
     const on = hasStaff(r);
-    h += `<div class="up"><div class="t"><div class="n">${ro.name} <span class="lv">${on ? '勤務中' : ''}</span></div>
-      <div class="d">${locked ? `🔒 Lv.${ro.lv} から` : ro.desc}　給料 ${yen(ro.wage)}/日</div></div>
-      ${on ? `<button class="btn sub" data-fire="${r}">辞めてもらう</button>`
-        : `<button class="btn green" data-hire="${r}" ${locked || S.money < ro.hire ? 'disabled' : ''}>${locked ? '未解禁' : '雇う ' + yen(ro.hire)}</button>`}</div>`;
+    if (!on) {
+      h += `<div class="up"><div class="t"><div class="n">${ro.name}</div>
+        <div class="d">${locked ? `🔒 Lv.${ro.lv} から` : ro.desc}</div></div>
+        <button class="btn green" data-buy="${r}" ${locked || S.money < ro.price ? 'disabled' : ''}>${locked ? '未解禁' : yen(ro.price)}</button></div>`;
+    } else {
+      const lv = robLv(r);
+      const maxed = lv >= ROBOT_UP_COST.length;
+      const cur = ROBOT_LV[lv];
+      const nx = ROBOT_LV[lv + 1];
+      const spec = (x) => `速さ ×${x.spd}・電池 ${x.bat}秒`;
+      h += `<div class="up"><div class="t"><div class="n">${ro.name} <span class="lv">${maxed ? 'MAX ' : ''}Lv.${lv + 1}</span></div>
+        <div class="d">${ro.desc}<br>${spec(cur)}${maxed ? '' : ' → ' + spec(nx)}</div></div>
+        <button class="btn green" data-rup="${r}" ${maxed || S.money < ROBOT_UP_COST[lv] ? 'disabled' : ''}>${maxed ? '最大' : 'Lv.UP ' + yen(ROBOT_UP_COST[lv])}</button></div>`;
+    }
   });
+  {
+    const n = S.chargers;
+    const full = n >= CHARGER_COSTS.length;
+    h += `<div class="up"><div class="t"><div class="n">⚡ 充電スポット <span class="lv">${n} / ${CHARGER_COSTS.length}</span></div>
+      <div class="d">ロボットの充電場所（バックヤードの壁ぎわに設置）。1台ずつ使うので、動かすロボットの数だけあると安心。${n === 0 ? '<b>まだ無いのでロボットは動きません！</b>' : ''}</div></div>
+      <button class="btn green" data-charger="1" ${full || S.money < CHARGER_COSTS[n] ? 'disabled' : ''}>${full ? '設置済み' : yen(CHARGER_COSTS[n])}</button></div>`;
+  }
   h += '<div class="foot"><button class="btn sub" id="btn-title">タイトルへ戻る</button></div>';
   $('shop').innerHTML = h;
 }
@@ -2281,8 +2390,9 @@ $('shop').addEventListener('click', (e) => {
   const b = e.target.closest('button');
   if (!b) return;
   if (b.dataset.id) purchase(b.dataset.id);
-  else if (b.dataset.hire) hireStaff(b.dataset.hire);
-  else if (b.dataset.fire) fireStaff(b.dataset.fire);
+  else if (b.dataset.buy) buyRobot(b.dataset.buy);
+  else if (b.dataset.rup) upgradeRobot(b.dataset.rup);
+  else if (b.dataset.charger) buyCharger();
   else if (b.id === 'btn-title') {
     save();
     location.reload(); // タイトル画面へ（セーブ済み）
@@ -2361,7 +2471,6 @@ function nextDay() {
   S.day++;
   S.time = DAY_START;
   S.stats = { sales: 0, customers: 0, lost: 0 };
-  payWages();
   save();
 }
 
@@ -2592,18 +2701,21 @@ function updateWorld(dt) {
   // レジ
   if (reg.serving) {
     const c = reg.serving;
-    reg.t += dt / 0.9;
+    reg.t += (dt / 0.9) * (reg.byBot ? ROBOT_LV[robLv('cashier')].spd : 1);
     regTag.set({ chip: 'ピッ…', bar: q40(reg.t) });
     if (reg.t >= 1) { reg.serving = null; c.pay(); }
   } else {
     regTag.set(null);
     const c = frontCustomer();
-    if (hasStaff('cashier') && c) {
-      reg.autoT += dt;
-      if (reg.autoT >= 2.2) { reg.autoT = 0; reg.serving = c; reg.t = 0.2; c.state = 'serving'; }
+    if (robotOn('cashier') && c) {
+      reg.autoT += dt * ROBOT_LV[robLv('cashier')].spd;
+      if (reg.autoT >= 2.2) { reg.autoT = 0; reg.serving = c; reg.t = 0.2; reg.byBot = true; c.state = 'serving'; }
     } else reg.autoT = 0;
   }
-  staff.anim(dt, 0, !!reg.serving && hasStaff('cashier') && Math.hypot(player.pos.x - LAYOUT.register.use.x, player.pos.z - LAYOUT.register.use.z) > 2.2);
+  staff.setPower(S.chargers > 0);
+  staff.setBattery(1);
+  cashierTag.set(hasStaff('cashier') ? (S.chargers > 0 ? { chip: `${ROLES.cashier.name} Lv.${robLv('cashier') + 1}` } : { chip: `${ROLES.cashier.name} ⚡充電スポットなし`, tone: 'warn' }) : null);
+  staff.anim(dt, 0, !!reg.serving && reg.byBot && robotOn('cashier') && Math.hypot(player.pos.x - LAYOUT.register.use.x, player.pos.z - LAYOUT.register.use.z) > 2.2);
 
   // お客さん（レベルが上がるほど増える）
   if (S.opened) {
@@ -2842,4 +2954,4 @@ showMenu('main');
 
 loop();
 // 動作確認用
-window.__game = { frame, fpsCam, shelfMode, DISPLAYS, workers, hireStaff, payWages, makers, sandCase, hotCase, S, stations, shelves, cooker, stn, customers, queue, player, view, craft, carry, fridge, addExp, findPath };
+window.__game = { frame, fpsCam, shelfMode, DISPLAYS, workers, buyRobot, upgradeRobot, buyCharger, makers, sandCase, hotCase, S, stations, shelves, cooker, stn, customers, queue, player, view, craft, carry, fridge, addExp, findPath };
