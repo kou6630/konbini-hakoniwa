@@ -388,8 +388,9 @@ export function makeRobot(o = {}) {
   bulb.position.set(0, 0.42, 0);
   head.add(bulb);
   if (o.cap) {
-    cy(head, 0.2, 0.22, 0.07, '#ffffff', [0, 0.0, 0], 20);
-    bx(head, [0.34, 0.025, 0.16], '#ffffff', [0, 0.0, 0.24], { r: 0.01 });
+    cy(head, 0.2, 0.22, 0.07, o.capColor || '#ffffff', [0, 0.0, 0], 20);
+    bx(head, [0.34, 0.025, 0.16], o.capColor || '#ffffff', [0, 0.0, 0.24], { r: 0.01 });
+    if (o.capColor) bx(head, [0.12, 0.05, 0.02], '#ffd23f', [0, 0.04, 0.25], { r: 0.005 }); // 帽子のバッジ
   }
 
   // 腕

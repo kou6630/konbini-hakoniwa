@@ -1968,7 +1968,7 @@ function rateMult(h) {
 /** レベルが上がるほど客足が増える（Lv.1 は約35秒に1人） */
 function nextSpawnDelay() {
   const levelMult = 1 + 0.4 * (S.level - 1);
-  const mult = rateMult(S.time) * levelMult * val('poster') * (0.4 + S.rep * 0.24) * (gangActive() ? 0.35 : 1);
+  const mult = rateMult(S.time) * levelMult * val('poster') * (0.4 + S.rep * 0.24) * (gangActive() ? (guardOn() ? 0.65 : 0.35) : 1);
   return (35 / mult) * rand(0.75, 1.25);
 }
 /** 車で来るお客さんの人数（1〜4人） */
@@ -1978,7 +1978,7 @@ function rollPassengers() {
 }
 function spawnCustomer() {
   // ヤンキーがたむろしていると、入れずに帰る人が多い
-  if (gangActive() && Math.random() < 0.6) { spawnScared(); return; }
+  if (gangActive() && Math.random() < (guardOn() ? 0.25 : 0.6)) { spawnScared(); return; }
   if (S.level >= 2 && Math.random() < 0.55) {
     const spot = pickSpot();
     if (spot) { new Car(spot, rollPassengers()); return; }
@@ -2002,7 +2002,7 @@ const DOOR_X = LAYOUT.door.xc;
 const LOT_GAP_XS = [LOT.spotsX[0] - LOT.pitch / 2, ...LOT_GAPS];
 const nearestGap = (x) => LOT_GAP_XS.reduce((b, g) => (Math.abs(g - x) < Math.abs(b - x) ? g : b), LOT_GAP_XS[0]);
 const gangActive = () => !!gang && (gang.state === 'walk' || gang.state === 'loiter');
-const outsideBusy = () => cars.length > 0 || !!bus || !!gang || passersby.length > 0;
+const outsideBusy = () => cars.length > 0 || !!bus || !!gang || passersby.length > 0 || workers.some((w) => w.pos.z > 4.2);
 
 /** 乗り物：道すじ（{x,z,rev?,speed?}）をたどって走る */
 class Vehicle {
@@ -2198,6 +2198,14 @@ class Gang {
     this.state = 'walk';
     toast('🏍 ヤンキーが駐車場にたむろし始めた…！ お客さんが入りづらくなる', 5000);
   }
+  /** 警備ロボに追い払われる：慌てて車へ戻る */
+  driveOff() {
+    if (this.state !== 'loiter') return false;
+    this.timer = 0;
+    this.members.forEach((m) => { m.speed *= 1.8; });
+    toast('🤖 警備ロボがヤンキーを追い払った！', 3000);
+    return true;
+  }
   /** メンバー1人を、経由点を通って目的地へ歩かせる */
   stepMember(m, dt, going) {
     const pts = going
@@ -2232,7 +2240,7 @@ class Gang {
       if (this.timer <= 0 || !S.opened) {
         this.state = 'back';
         this.members.forEach((m) => { m.stage = 0; m.person.sit = false; });
-        toast('ヤンキーが帰っていく…', 2500);
+        if (S.opened) toast('ヤンキーが帰っていく…', 2500);
       }
     } else if (this.state === 'back') {
       let done = 0;
@@ -2413,8 +2421,9 @@ const ROLES = {
   maker: { name: '握りロボ', desc: '握り台でおにぎりを握り、トレーに置く（棚の段の設定に合わせる）', lv: 3, price: 8000 },
   stocker: { name: '品出しロボ', desc: 'トレーや調理台の商品を売り場に並べ、飲み物・お菓子・スイーツも補充する', lv: 4, price: 7000 },
   kitchen: { name: '厨房ロボ', desc: 'サンドイッチ台・揚げ物台・弁当台で、足りなくなった商品を作る', lv: 5, price: 9000 },
+  guard: { name: '警備ロボ', desc: 'ヤンキーが座り込んだら入口の前まで行って追い払う。いる間は、ヤンキーによる客足の落ち込みもやわらぐ', lv: 8, price: 12000 },
 };
-const ROLE_IDS = ['cashier', 'cook', 'maker', 'stocker', 'kitchen'];
+const ROLE_IDS = ['cashier', 'cook', 'maker', 'stocker', 'kitchen', 'guard'];
 const ROBOT_LV = [ // spd = 動きと作業の速さ、bat = 電池が持つ秒数
   { spd: 1, bat: 100 }, { spd: 1.25, bat: 130 }, { spd: 1.5, bat: 170 }, { spd: 1.8, bat: 220 }, { spd: 2.2, bat: 300 },
 ];
@@ -2431,13 +2440,16 @@ const WORKER_LOOK = {
   maker: { color: '#8d6ae0' },
   stocker: { color: '#2f7ff0' },
   kitchen: { color: '#e86a5c' },
+  guard: { color: '#22305a' },
 };
 const WORKER_HOME = {
   cook: { x: -4.4, z: 0.6 },
   maker: { x: -5.1, z: -1.7 },
   stocker: { x: -4.4, z: -3.0 },
   kitchen: { x: -4.3, z: -4.3 },
+  guard: { x: 1.7, z: 2.5 }, // 入口の近く
 };
+const guardOn = () => S.chargers > 0 && workers.some((w) => w.role === 'guard');
 const workers = [];
 const chargerModels = CHARGER_SPOTS.map((p) => {
   const c = buildCharger();
@@ -2454,7 +2466,7 @@ class Worker {
   constructor(role) {
     this.role = role;
     const look = WORKER_LOOK[role];
-    this.person = makeRobot({ color: look.color, cap: role === 'kitchen' });
+    this.person = makeRobot({ color: look.color, cap: role === 'kitchen' || role === 'guard', capColor: role === 'guard' ? '#22305a' : '#ffffff' });
     const h = WORKER_HOME[role];
     this.home = freeNear(h);
     this.pos = new THREE.Vector3(this.home.x, 0, this.home.z);
@@ -2512,6 +2524,7 @@ class Worker {
     if (idx < 0) return;
     this.pad = idx;
     this.mode = 'toCharge';
+    if (gang && gang.guard === this) gang.guard = null; // 担当だったら、ほかの警備ロボに引き継ぐ
     this.steps = [];
     this.cur = null;
     this.path = findPath(this.pos.x, this.pos.z, CHARGER_SPOTS[idx].x, CHARGER_SPOTS[idx].z);
@@ -2574,7 +2587,7 @@ class Worker {
     if (s.go) {
       if (!s.started) {
         s.started = true;
-        this.path = findPath(this.pos.x, this.pos.z, s.go.x, s.go.z);
+        this.path = s.direct ? [new THREE.Vector3(s.go.x, 0, s.go.z)] : findPath(this.pos.x, this.pos.z, s.go.x, s.go.z);
       } else this.cur = null; // 着いた
     } else if (s.act) {
       try { s.act(this); } catch (e) { /* ignore */ }
@@ -2630,7 +2643,27 @@ class Worker {
       this.decideStocker(goHome, use);
     } else if (this.role === 'kitchen') {
       this.decideKitchen(goHome, use);
+    } else if (this.role === 'guard') {
+      this.decideGuard(goHome);
     }
+  }
+  /** 警備：ヤンキーが座り込んだら、入口の前まで行って追い払う */
+  decideGuard(goHome) {
+    if (gang && gang.state === 'loiter' && !gang.guard) {
+      gang.guard = this;
+      const dx = LAYOUT.door.xc;
+      this.setSteps([
+        { go: { x: dx, z: 3.0 } },
+        { go: { x: dx + 0.5, z: 4.9 }, direct: true },
+        { wait: 4 }, // 声をかける
+        { act: () => { if (gang) gang.driveOff(); } },
+        { go: { x: dx, z: 3.1 }, direct: true },
+        { act: () => { if (gang && gang.guard === this) gang.guard = null; } },
+        ...goHome(),
+      ]);
+      return;
+    }
+    this.setSteps(goHome());
   }
   /** 握る種類：棚の段の設定に対して、足りない種類（材料がある）を優先 */
   pickOnigiriKind() {
@@ -3224,7 +3257,8 @@ function updateWorld(dt) {
   updateDeliveries(dt);
 
   // 自動ドア
-  const wantOpen = customers.some((c) => Math.abs(c.pos.x - LAYOUT.door.xc) < 1.6 && c.pos.z > 2.6 && c.pos.z < 6.2);
+  const nearDoor = (p) => Math.abs(p.x - LAYOUT.door.xc) < 1.6 && p.z > 2.6 && p.z < 6.2;
+  const wantOpen = customers.some((c) => nearDoor(c.pos)) || workers.some((w) => w.role === 'guard' && nearDoor(w.pos));
   doorWasOpen = wantOpen;
   doorOpen += ((wantOpen ? 1 : 0) - doorOpen) * (1 - Math.exp(-8 * dt));
   door.panels.forEach((p) => { p.position.x = p.userData.baseX + p.userData.dir * doorOpen * 0.8; });
